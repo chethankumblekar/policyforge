@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -68,11 +69,12 @@ func runScan(args []string) {
 	// 2. Normalize into the unified internal resource model.
 	normalized := normalizer.Normalize(resources)
 
-	// 3. Evaluate against the built-in rule set.
-	// NOTE: v0.1 ships with a small set of native Go checks as a working
-	// end-to-end proof of concept. The Phase 1 milestone replaces this
-	// with real OPA/Rego evaluation against the policies/ rule packs.
-	findings := engine.Evaluate(normalized)
+	// 3. Evaluate against the embedded Rego rule packs.
+	findings, err := engine.Evaluate(context.Background(), normalized)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "policy evaluation error: %v\n", err)
+		os.Exit(1)
+	}
 
 	switch *format {
 	case "sarif":

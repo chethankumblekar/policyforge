@@ -13,7 +13,7 @@ go test ./...
 
 ## Ways to contribute
 
-- **Add a policy rule.** Native Go checks live in `internal/engine/engine.go`; the corresponding Rego reference lives in `policies/`. Please add both, plus a test fixture in `examples/`.
+- **Add a policy rule.** Rules are real `.rego` files under `policies/<provider>/<pack>/`, embedded into the binary at build time — no Go changes needed. Each `deny[msg]` rule should be paired with a `severity["PF-XXX-NNN"] = "..."` entry in the same package (see `policies/azure/cis-foundations` for examples), and a test fixture in `examples/`.
 - **Improve the Terraform parser.** `internal/parser/terraform` is intentionally simple (regex-based) in v0.1. Help is welcome moving it toward a real HCL AST parser.
 - **Bicep support.** `internal/parser/bicep` is currently an empty package waiting for a first implementation — see the roadmap for the intended ARM JSON compilation approach.
 - **Kubernetes support.** Same story for `internal/parser/k8s` — planned for Phase 2.

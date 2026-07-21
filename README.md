@@ -4,7 +4,7 @@
 
 Most IaC scanners are Terraform/CloudFormation-first and treat Bicep/ARM as a second-class format. PolicyForge flips that: Bicep and Azure Policy alignment get full support, alongside Terraform and (from Phase 2) Kubernetes manifests. It also generates a lightweight SBOM on every scan as a first step toward supply-chain visibility.
 
-> **Status:** v0.1 (early scaffold). The CLI runs end-to-end today against Terraform with a native Go rule set; OPA/Rego evaluation and Bicep support are next. See [`docs/roadmap.md`](docs/roadmap.md).
+> **Status:** v0.1. The CLI runs end-to-end against Terraform, evaluating real OPA/Rego rule packs (embedded into the binary at build time); Bicep and Kubernetes support are next. See [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Quick start
 
@@ -59,8 +59,10 @@ See the full architecture diagram and design rationale in the project plan under
 | PF-AZ-002 | `azurerm_storage_account` | TLS 1.2 minimum enforced | CIS Azure Foundations 3.1 |
 | PF-AZ-010 | `azurerm_network_security_group_rule` | No unrestricted inbound rules | CIS Azure Foundations 6.1/6.2 |
 | PF-AZ-020 | `azurerm_key_vault` | Purge protection enabled | Data-loss prevention best practice |
+| PF-AWS-001 | `aws_s3_bucket` | No `public-read`/`public-read-write` canned ACL | AWS S3 security best practice |
+| PF-AWS-010 | `aws_security_group_rule` | No unrestricted ingress from `0.0.0.0/0` | AWS security group best practice |
 
-More rules and AWS coverage are on the roadmap — see [Contributing](CONTRIBUTING.md) if you'd like to add one.
+All rules are real Rego policies under [`policies/`](policies) — see [Contributing](CONTRIBUTING.md) if you'd like to add one.
 
 ## CI/CD integration
 
@@ -73,9 +75,9 @@ More rules and AWS coverage are on the roadmap — see [Contributing](CONTRIBUTI
 cmd/policyforge/        CLI entrypoint
 internal/parser/        Terraform (v0.1), Bicep + K8s (planned)
 internal/normalizer/     Unified resource model
-internal/engine/         Policy evaluation + SARIF/JSON/table rendering
+internal/engine/         OPA/Rego policy evaluation + SARIF/JSON/table rendering
 internal/sbom/           SBOM generation
-policies/                Rego rule packs (reference implementation for Phase 1)
+policies/                Rego rule packs, embedded into the binary at build time
 integrations/            CI/CD glue (GitHub Action, Azure DevOps task)
 examples/                Sample IaC files for demoing scans
 ```

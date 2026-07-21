@@ -10,12 +10,12 @@
 - [x] GitHub Action integration
 
 ## Phase 1 — real policy engine
-- [x] `internal/engine/opa.go` written — real Rego evaluation via `EvaluateOPA`, gated behind the `opa` build tag until dependencies are fetched on a machine with unrestricted internet (`go get github.com/open-policy-agent/opa/rego@v0.70.0`, then `go build -tags opa ./...`)
-- [ ] Swap `cmd/policyforge/main.go` to call `EvaluateOPA` by default and remove the `opa` build tag
-- [ ] Load rule packs dynamically from `policies/` at runtime instead of hardcoding
-- [ ] Add rule severity as Rego metadata instead of the TODO'd hardcoded `SeverityHigh` in `opa.go`
-- [ ] Expand CIS Azure Foundations coverage beyond the 4 seed rules
-- [ ] Add core AWS rule pack (S3, security groups)
+- [x] `internal/engine/opa.go` — real Rego evaluation via `EvaluateOPA`, now a default dependency (`github.com/open-policy-agent/opa/rego`), no build tag required
+- [x] `cmd/policyforge/main.go` calls `engine.Evaluate` (OPA-backed) by default; the v0.1 native Go rule set has been removed in favor of Rego
+- [x] Rule packs are embedded at build time (`policies/embed.go`, `policies.FS`) and discovered dynamically by walking the `data.policyforge` result tree — no package names hardcoded in Go, so new packs under `policies/` need no code changes
+- [x] Rule severity is declared per-pack as Rego metadata (a `severity[ruleID] = "..."` partial object alongside each `deny` rule), read by `internal/engine/opa.go` instead of a hardcoded `SeverityHigh`
+- [x] Expanded CIS Azure Foundations coverage: NSG (PF-AZ-010) and Key Vault (PF-AZ-020) now live as real Rego rules alongside storage account (PF-AZ-001/002)
+- [x] Core AWS rule pack added (`policies/aws/core`): S3 public-ACL check (PF-AWS-001), security group unrestricted ingress (PF-AWS-010)
 - [ ] Real HCL AST parser (replace regex-based Terraform parser)
 
 ## Phase 2 — Bicep + Kubernetes

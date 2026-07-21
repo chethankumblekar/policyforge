@@ -1,45 +1,34 @@
-//go:build opa
-// +build opa
-
-// This file implements the Phase 1 milestone: real OPA/Rego evaluation,
-// replacing the native Go checks in engine.go with actual .rego policy
-// files loaded from policies/.
-//
-// IT IS NOT WIRED IN BY DEFAULT (behind the "opa" build tag) because this
-// sandbox environment cannot fetch github.com/open-policy-agent/opa's
-// transitive dependencies (golang.org/x/sys is not reachable here).
-//
-// To activate this on your own machine, with full internet access:
-//
-//   go get github.com/open-policy-agent/opa/rego@v0.70.0
-//   go build -tags opa ./...
-//
-// Then swap the call in cmd/policyforge/main.go from engine.Evaluate to
-// engine.EvaluateOPA, and delete the "opa" build tag once you're ready
-// to make this the default path (remove the native evaluateNative rules
-// in engine.go at that point, or keep them as a fallback).
+// Real OPA/Rego evaluation, replacing the v0.1 native Go checks. Rule
+// packs live entirely as .rego files under policies/ (embedded into the
+// binary via policies.FS, see policies/embed.go) — adding a new check
+// means adding a new deny rule, no Go code changes.
 package engine
 
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"strings"
 
 	"github.com/open-policy-agent/opa/rego"
 
 	"github.com/chethankumblekar/policyforge/internal/normalizer"
+	"github.com/chethankumblekar/policyforge/policies"
 )
 
-// EvaluateOPA runs every resource through the .rego rule packs under
-// policyDir (e.g. "policies/azure/cis-foundations"), collecting any
-// `deny[msg]` results as findings.
-//
-// Unlike evaluateNative, rule content lives entirely in .rego files —
-// adding a new check means adding a new deny rule, no Go code changes.
-func EvaluateOPA(ctx context.Context, policyDir string, resources []normalizer.Resource) ([]Finding, error) {
-	query, err := rego.New(
-		rego.Query("data.policyforge.azure.cis_foundations.deny"),
-		rego.Load([]string{policyDir}, nil),
-	).PrepareForEval(ctx)
+// EvaluateOPA runs every resource through every .rego rule pack embedded
+// under policies/, collecting `deny[msg]` results as findings. Rule packs
+// are discovered purely by walking whatever data.policyforge tree the
+// loaded modules produce, so adding a new package under policies/ (e.g.
+// policies/aws/core) needs no changes here.
+func EvaluateOPA(ctx context.Context, resources []normalizer.Resource) ([]Finding, error) {
+	modules, err := loadModules(policies.FS)
+	if err != nil {
+		return nil, fmt.Errorf("loading policy modules: %w", err)
+	}
+
+	opts := append([]func(*rego.Rego){rego.Query("data.policyforge")}, modules...)
+	query, err := rego.New(opts...).PrepareForEval(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("preparing rego query: %w", err)
 	}
@@ -60,27 +49,86 @@ func EvaluateOPA(ctx context.Context, policyDir string, resources []normalizer.R
 
 		for _, result := range results {
 			for _, expr := range result.Expressions {
-				msgs, ok := expr.Value.([]interface{})
-				if !ok {
-					continue
-				}
-				for _, m := range msgs {
-					msg, _ := m.(string)
-					findings = append(findings, Finding{
-						RuleID:      ruleIDFromMessage(msg),
-						Title:       msg,
-						Severity:    SeverityHigh, // TODO: derive from rule metadata once rule packs carry severity annotations
-						Resource:    r.Name,
-						File:        r.Source.File,
-						Line:        r.Source.Line,
-						Description: msg,
-					})
-				}
+				findings = append(findings, collectFindings(expr.Value, r)...)
 			}
 		}
 	}
 
 	return findings, nil
+}
+
+// loadModules reads every .rego file out of fsys and returns them as
+// rego.Module options, so the caller can load an embed.FS the same way
+// rego.Load would read from disk.
+func loadModules(fsys fs.FS) ([]func(*rego.Rego), error) {
+	var opts []func(*rego.Rego)
+
+	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".rego") {
+			return nil
+		}
+		content, rerr := fs.ReadFile(fsys, path)
+		if rerr != nil {
+			return rerr
+		}
+		opts = append(opts, rego.Module(path, string(content)))
+		return nil
+	})
+
+	return opts, err
+}
+
+// collectFindings walks a data.policyforge result node looking for
+// "deny"/"severity" pairs at any depth, since rule packs can nest under
+// arbitrary provider/pack-name namespaces (policyforge.azure.cis_foundations,
+// policyforge.aws.core, ...).
+func collectFindings(node interface{}, r normalizer.Resource) []Finding {
+	obj, ok := node.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	var findings []Finding
+
+	if denyRaw, ok := obj["deny"].([]interface{}); ok {
+		sevMap, _ := obj["severity"].(map[string]interface{})
+		for _, m := range denyRaw {
+			msg, _ := m.(string)
+			ruleID := ruleIDFromMessage(msg)
+			findings = append(findings, Finding{
+				RuleID:      ruleID,
+				Title:       titleFromMessage(msg),
+				Severity:    severityFor(sevMap, ruleID),
+				Resource:    r.Name,
+				File:        r.Source.File,
+				Line:        r.Source.Line,
+				Description: msg,
+			})
+		}
+	}
+
+	for key, child := range obj {
+		if key == "deny" || key == "severity" {
+			continue
+		}
+		findings = append(findings, collectFindings(child, r)...)
+	}
+
+	return findings
+}
+
+// severityFor looks up a rule ID's severity from a package's severity
+// object, defaulting to HIGH if the rule pack didn't declare one.
+func severityFor(sevMap map[string]interface{}, ruleID string) Severity {
+	if sevMap != nil {
+		if s, ok := sevMap[ruleID].(string); ok {
+			return Severity(s)
+		}
+	}
+	return SeverityHigh
 }
 
 // ruleIDFromMessage extracts the "PF-AZ-001"-style prefix that rule packs
@@ -92,4 +140,16 @@ func ruleIDFromMessage(msg string) string {
 		}
 	}
 	return "UNKNOWN"
+}
+
+// titleFromMessage strips the "PF-AZ-001: " rule-ID prefix a deny message
+// is expected to lead with, since the table/SARIF output already lists
+// the rule ID in its own column.
+func titleFromMessage(msg string) string {
+	for i, c := range msg {
+		if c == ':' {
+			return strings.TrimSpace(msg[i+1:])
+		}
+	}
+	return msg
 }
