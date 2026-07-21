@@ -1,0 +1,47 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Microsoft/azure-pipelines-task-lib/master/tasks.schema.json",
+  "id": "d9a9046a-482e-4040-b4de-a97adf7085d9",
+  "name": "PolicyForgeScan",
+  "friendlyName": "PolicyForge Scan",
+  "description": "Scan Terraform/Bicep/Kubernetes IaC against PolicyForge policy-as-code rule packs and publish SARIF results.",
+  "helpMarkDown": "See https://github.com/chethankumblekar/policyforge for rule pack documentation.",
+  "category": "Utility",
+  "author": "PolicyForge contributors",
+  "version": {
+    "Major": 0,
+    "Minor": 1,
+    "Patch": 0
+  },
+  "instanceNameFormat": "PolicyForge scan $(path)",
+  "inputs": [
+    {
+      "name": "path",
+      "type": "string",
+      "label": "Path to scan",
+      "defaultValue": ".",
+      "required": false,
+      "helpMarkDown": "Path to the directory of IaC files to scan."
+    },
+    {
+      "name": "policyDir",
+      "type": "string",
+      "label": "Custom policy directory",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Optional path to a directory of additional user-authored .rego policy files."
+    },
+    {
+      "name": "failOnHigh",
+      "type": "boolean",
+      "label": "Fail the build on HIGH/CRITICAL findings",
+      "defaultValue": "true",
+      "required": false
+    }
+  ],
+  "execution": {
+    "Bash": {
+      "target": "scan.sh",
+      "argumentFormat": ""
+    }
+  }
+}

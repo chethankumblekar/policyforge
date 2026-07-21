@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insecure-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: insecure-app
+  template:
+    metadata:
+      labels:
+        app: insecure-app
+    spec:
+      hostNetwork: true
+      containers:
+        - name: app
+          image: example/app:latest
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+            runAsNonRoot: false
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-limits-pod
+spec:
+  containers:
+    - name: app
+      image: example/app:latest

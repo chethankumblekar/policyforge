@@ -6,5 +6,5 @@ package policies
 
 import "embed"
 
-//go:embed azure aws
+//go:embed azure aws k8s
 var FS embed.FS

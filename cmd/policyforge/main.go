@@ -16,6 +16,9 @@ import (
 
 	"github.com/chethankumblekar/policyforge/internal/engine"
 	"github.com/chethankumblekar/policyforge/internal/normalizer"
+	"github.com/chethankumblekar/policyforge/internal/parser"
+	"github.com/chethankumblekar/policyforge/internal/parser/bicep"
+	"github.com/chethankumblekar/policyforge/internal/parser/k8s"
 	"github.com/chethankumblekar/policyforge/internal/parser/terraform"
 	"github.com/chethankumblekar/policyforge/internal/sbom"
 )
@@ -57,10 +60,11 @@ func runScan(args []string) {
 	path := fs.String("path", ".", "path to a directory of IaC files to scan")
 	format := fs.String("format", "table", "output format: table | sarif | json")
 	genSBOM := fs.Bool("sbom", false, "also generate an SBOM alongside scan results")
+	policyDir := fs.String("policy-dir", "", "optional path to a directory of additional user-authored .rego policy files")
 	fs.Parse(args)
 
-	// 1. Parse Terraform files in the target path.
-	resources, err := terraform.ParseDir(*path)
+	// 1. Parse every supported IaC language found in the target path.
+	resources, err := parseAll(*path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "parse error: %v\n", err)
 		os.Exit(1)
@@ -69,8 +73,9 @@ func runScan(args []string) {
 	// 2. Normalize into the unified internal resource model.
 	normalized := normalizer.Normalize(resources)
 
-	// 3. Evaluate against the embedded Rego rule packs.
-	findings, err := engine.Evaluate(context.Background(), normalized)
+	// 3. Evaluate against the embedded Rego rule packs, plus any custom
+	// policy pack the user pointed --policy-dir at.
+	findings, err := engine.Evaluate(context.Background(), normalized, *policyDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "policy evaluation error: %v\n", err)
 		os.Exit(1)
@@ -94,4 +99,32 @@ func runScan(args []string) {
 	if engine.HasFailures(findings) {
 		os.Exit(1)
 	}
+}
+
+// parseAll runs every language-specific parser (Terraform, Bicep,
+// Kubernetes) over path and merges their results. Each parser only acts
+// on the file extensions it owns, so this is safe to call on a directory
+// containing a mix of IaC languages, or on a single file.
+func parseAll(path string) ([]parser.Resource, error) {
+	var all []parser.Resource
+
+	tf, err := terraform.ParseDir(path)
+	if err != nil {
+		return nil, fmt.Errorf("terraform: %w", err)
+	}
+	all = append(all, tf...)
+
+	bp, err := bicep.ParseDir(path)
+	if err != nil {
+		return nil, fmt.Errorf("bicep: %w", err)
+	}
+	all = append(all, bp...)
+
+	kr, err := k8s.ParseDir(path)
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes: %w", err)
+	}
+	all = append(all, kr...)
+
+	return all, nil
 }

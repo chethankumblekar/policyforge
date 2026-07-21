@@ -35,9 +35,11 @@ type Finding struct {
 	Description string
 }
 
-// Evaluate runs every embedded Rego rule pack against the given resources.
-func Evaluate(ctx context.Context, resources []normalizer.Resource) ([]Finding, error) {
-	return EvaluateOPA(ctx, resources)
+// Evaluate runs every embedded Rego rule pack against the given resources,
+// plus any user-authored rule packs found under extraPolicyDirs (custom
+// policy authoring).
+func Evaluate(ctx context.Context, resources []normalizer.Resource, extraPolicyDirs ...string) ([]Finding, error) {
+	return EvaluateOPA(ctx, resources, extraPolicyDirs...)
 }
 
 // HasFailures reports whether any HIGH or CRITICAL findings exist, used
@@ -75,9 +77,9 @@ func ToJSON(findings []Finding) string {
 // sarifLog and related types implement just enough of the SARIF 2.1.0
 // schema for GitHub code scanning / Azure DevOps to ingest results.
 type sarifLog struct {
-	Schema  string      `json:"$schema"`
-	Version string      `json:"version"`
-	Runs    []sarifRun  `json:"runs"`
+	Schema  string     `json:"$schema"`
+	Version string     `json:"version"`
+	Runs    []sarifRun `json:"runs"`
 }
 
 type sarifRun struct {
@@ -95,9 +97,9 @@ type sarifDriver struct {
 }
 
 type sarifResult struct {
-	RuleID  string          `json:"ruleId"`
-	Level   string          `json:"level"`
-	Message sarifMessage    `json:"message"`
+	RuleID    string          `json:"ruleId"`
+	Level     string          `json:"level"`
+	Message   sarifMessage    `json:"message"`
 	Locations []sarifLocation `json:"locations"`
 }
 
