@@ -106,3 +106,83 @@ func TestParseDir_NonexistentDirErrors(t *testing.T) {
 		t.Fatal("expected an error for a nonexistent directory, got nil")
 	}
 }
+
+func TestCanonicalAttributes_TranslatesARMPropertyNames(t *testing.T) {
+	attrs := CanonicalAttributes("Microsoft.Storage/storageAccounts", map[string]interface{}{
+		"allowBlobPublicAccess": true,
+		"minimumTlsVersion":     "TLS1_0",
+	})
+
+	if attrs["allow_nested_items_to_be_public"] != "true" {
+		t.Errorf("expected allow_nested_items_to_be_public=true, got %q", attrs["allow_nested_items_to_be_public"])
+	}
+	if attrs["min_tls_version"] != "TLS1_0" {
+		t.Errorf("expected min_tls_version=TLS1_0, got %q", attrs["min_tls_version"])
+	}
+}
+
+func TestCanonicalAttributes_TypeMatchingIsCaseInsensitive(t *testing.T) {
+	attrs := CanonicalAttributes("microsoft.storage/storageaccounts", map[string]interface{}{
+		"allowBlobPublicAccess": false,
+	})
+	if attrs["allow_nested_items_to_be_public"] != "false" {
+		t.Errorf("expected a case-insensitive ARM type match, got %+v", attrs)
+	}
+}
+
+func TestCanonicalAttributes_UnmappedTypeReturnsEmpty(t *testing.T) {
+	attrs := CanonicalAttributes("Microsoft.Compute/virtualMachines", map[string]interface{}{"osType": "Linux"})
+	if len(attrs) != 0 {
+		t.Errorf("expected no attributes for an ARM type with no key mapping, got %+v", attrs)
+	}
+}
+
+func TestCanonicalAttributes_MissingPropertySkipped(t *testing.T) {
+	attrs := CanonicalAttributes("Microsoft.Storage/storageAccounts", map[string]interface{}{})
+	if len(attrs) != 0 {
+		t.Errorf("expected no attributes when properties are absent, got %+v", attrs)
+	}
+}
+
+func TestCanonicalAttributes_UnsupportedValueTypeSkipped(t *testing.T) {
+	attrs := CanonicalAttributes("Microsoft.Storage/storageAccounts", map[string]interface{}{
+		"allowBlobPublicAccess": []interface{}{"not", "a", "scalar"},
+		"minimumTlsVersion":     "TLS1_2",
+	})
+	if _, ok := attrs["allow_nested_items_to_be_public"]; ok {
+		t.Errorf("expected a non-scalar property value to be skipped, got %+v", attrs)
+	}
+	if attrs["min_tls_version"] != "TLS1_2" {
+		t.Errorf("expected min_tls_version=TLS1_2, got %q", attrs["min_tls_version"])
+	}
+}
+
+func TestScalarToString(t *testing.T) {
+	cases := []struct {
+		name   string
+		input  interface{}
+		want   string
+		wantOK bool
+	}{
+		{"string", "TLS1_2", "TLS1_2", true},
+		{"bool true", true, "true", true},
+		{"bool false", false, "false", true},
+		{"number", float64(100), "100", true},
+		{"fractional number", float64(1.5), "1.5", true},
+		{"unsupported slice", []interface{}{"a"}, "", false},
+		{"unsupported map", map[string]interface{}{"a": "b"}, "", false},
+		{"nil", nil, "", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := scalarToString(tc.input)
+			if ok != tc.wantOK {
+				t.Fatalf("expected ok=%v, got ok=%v", tc.wantOK, ok)
+			}
+			if ok && got != tc.want {
+				t.Errorf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}

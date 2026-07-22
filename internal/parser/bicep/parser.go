@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/chethankumblekar/policyforge/internal/parser"
@@ -44,6 +45,62 @@ var armAttrKeyMap = map[string]map[string]string{
 	"Microsoft.KeyVault/vaults": {
 		"enablePurgeProtection": "purge_protection_enabled",
 	},
+}
+
+// armAttrKeyMapLower is armAttrKeyMap keyed by lowercased ARM type, since
+// some callers (e.g. Azure Resource Graph, used by internal/drift) return
+// resource type strings lowercased.
+var armAttrKeyMapLower = buildLowerKeyMap()
+
+func buildLowerKeyMap() map[string]map[string]string {
+	out := make(map[string]map[string]string, len(armAttrKeyMap))
+	for k, v := range armAttrKeyMap {
+		out[strings.ToLower(k)] = v
+	}
+	return out
+}
+
+// CanonicalAttributes translates a live Azure resource's ARM properties
+// (as returned by e.g. Azure Resource Graph) into the same canonical
+// attribute keys ParseFile produces for a Bicep declaration of the same
+// resource type, so callers (internal/drift) can compare live and
+// declared configuration attribute-for-attribute using the one ARM
+// property mapping this package already maintains. armType matching is
+// case-insensitive.
+func CanonicalAttributes(armType string, properties map[string]interface{}) map[string]string {
+	keyMap := armAttrKeyMapLower[strings.ToLower(armType)]
+	attrs := map[string]string{}
+	for armKey, canonicalKey := range keyMap {
+		v, ok := properties[armKey]
+		if !ok {
+			continue
+		}
+		s, ok := scalarToString(v)
+		if !ok {
+			continue
+		}
+		attrs[canonicalKey] = s
+	}
+	return attrs
+}
+
+// scalarToString renders a decoded-JSON scalar (string/bool/float64, per
+// encoding/json's default decode into interface{}) as the flat string form
+// the policy engine and drift comparison work with.
+func scalarToString(v interface{}) (string, bool) {
+	switch t := v.(type) {
+	case string:
+		return t, true
+	case bool:
+		if t {
+			return "true", true
+		}
+		return "false", true
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64), true
+	default:
+		return "", false
+	}
 }
 
 // ParseDir walks dir and parses every *.bicep file it finds.

@@ -45,6 +45,24 @@ Other output formats and options:
 
 Point `--policy-dir` at a directory of your own `.rego` files to merge them in alongside the embedded rule packs — no fork or rebuild required. Each file must declare a package under the `policyforge` namespace (e.g. `package policyforge.custom.naming`) and a `deny[msg]` rule; an optional `severity["YOUR-RULE-ID"] = "..."` mapping controls the finding's severity (defaults to `HIGH`). Files outside that namespace are rejected at load time with an explanation, since PolicyForge only discovers rules nested under `data.policyforge`.
 
+## Supply chain: signing, provenance, and drift detection
+
+```bash
+# Sign a scan artifact (needs cosign installed: https://docs.sigstore.dev/cosign/installation)
+./policyforge scan --path ./examples --format json > results.json
+./policyforge sign --key cosign.key --bundle results.bundle.json results.json
+
+# Emit a SLSA provenance predicate for the scan, then attach it as a signed attestation
+./policyforge scan --path ./examples --format json --provenance provenance.json > results.json
+./policyforge attest --key cosign.key --predicate provenance.json --bundle results.attest.bundle.json results.json
+
+# Compare declared IaC config against live Azure state (uses whatever Azure credentials
+# you already have — az login, environment variables, managed identity)
+./policyforge drift --path ./examples --subscription-id <your-subscription-id>
+```
+
+`sign`/`attest` shell out to a `cosign` binary you install separately (no Sigstore client libraries are vendored into PolicyForge itself — see `internal/signer`), so cosign's own version and flags govern the exact behavior; `--bundle` is required by modern cosign (v3+) and records a Rekor transparency log entry, so it needs network access to `rekor.sigstore.dev` even when signing with a local key. `drift` only compares the Azure resource types the Rego rule pack already understands, and only attributes your IaC source actually declares — it won't invent an opinion about configuration you never specified.
+
 ## How it works
 
 ```
@@ -91,18 +109,22 @@ internal/parser/        Terraform, Bicep, Kubernetes parsers + the shared Resour
 internal/normalizer/     Unified resource model
 internal/engine/         OPA/Rego policy evaluation + SARIF/JSON/table rendering
 internal/sbom/           SBOM generation
+internal/signer/         cosign CLI wrapper (sign/attest)
+internal/provenance/     SLSA provenance predicate generation
+internal/drift/          Azure Resource Graph client + declared-vs-live comparison
 policies/                Rego rule packs, embedded into the binary at build time
 integrations/            CI/CD glue (GitHub Action, Azure DevOps task)
 examples/                Sample IaC files for demoing scans
+enterprise/              Design doc for the planned hosted/enterprise tier (nothing built yet)
 ```
 
 ## Roadmap
 
-See [`docs/roadmap.md`](docs/roadmap.md) for the phased plan — real OPA/Rego evaluation, Bicep parsing, Kubernetes support, drift detection, and the enterprise dashboard tier.
+See [`docs/roadmap.md`](docs/roadmap.md) for the phased plan and what's left — Helm chart parsing and the enterprise dashboard tier are the two largest open items.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE). Core scanner, rule packs, and CI/CD integrations are and will remain fully open source. An optional enterprise tier (hosted dashboard, SSO, audit trail, SLA support) is planned as a separately licensed add-on — see `enterprise/README.md`.
+Apache 2.0 — see [LICENSE](LICENSE). Core scanner, rule packs, and CI/CD integrations are and will remain fully open source. An optional enterprise tier (hosted dashboard, SSO, audit trail, SLA support) is planned as a separately licensed add-on — see [`enterprise/DESIGN.md`](enterprise/DESIGN.md).
 
 ## Contributing
 

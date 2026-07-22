@@ -25,10 +25,10 @@
 - [x] Custom policy authoring: `--policy-dir` loads user-supplied `.rego` files at scan time (`internal/engine/opa.go`'s `loadUserModules`), validated to declare a package under the `policyforge` namespace so their rules are actually discoverable
 
 ## Phase 3 — supply chain + enterprise
-- [ ] Sigstore/cosign artifact signing
-- [ ] SLSA provenance attestation
-- [ ] Drift detection against live Azure resources via Azure Resource Graph
-- [ ] Enterprise module: hosted dashboard, Entra ID SSO, audit trail, compliance framework mapping (SOC2/PCI)
+- [x] Sigstore/cosign artifact signing: `policyforge sign <file>` shells out to a user-installed `cosign` binary (`internal/signer`) rather than vendoring Sigstore's client libraries, keeping the CLI's own dependency footprint lean — install cosign separately to use it
+- [x] SLSA provenance attestation: `policyforge scan --provenance <file>` emits a SLSA v0.2 predicate (`internal/provenance`) describing the scan (materials = scanned files by sha256 digest, invocation parameters, timestamps); `policyforge attest <file> --predicate <file>` attaches it as a signed in-toto attestation via `cosign attest-blob`
+- [x] Drift detection against live Azure resources via Azure Resource Graph: `policyforge drift --subscription-id <id>` (`internal/drift`) queries Resource Graph for the same Azure resource types the Rego rule pack covers, authenticating via `azidentity.DefaultAzureCredential` (honors `az login`/env vars/managed identity — PolicyForge never handles Azure credentials itself), and diffs live ARM properties against declared IaC attributes using the same ARM-property-name mapping the Bicep parser already maintains (`bicep.CanonicalAttributes`)
+- [ ] Enterprise module: hosted dashboard, Entra ID SSO, audit trail, compliance framework mapping (SOC2/PCI) — scoped in [`enterprise/DESIGN.md`](../enterprise/DESIGN.md), not yet built; several product decisions (hosting model, licensing mechanics) block starting implementation, see that doc's "Open questions"
 
 ## Contributing to the roadmap
 Open an issue if you'd like to pick up any item above, or propose a new one. See [CONTRIBUTING.md](../CONTRIBUTING.md).

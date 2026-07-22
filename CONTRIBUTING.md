@@ -17,6 +17,7 @@ go test ./...
 - **Terraform parser.** `internal/parser/terraform` is a real HCL v2 AST parser (`hashicorp/hcl/v2/hclsyntax`); it only captures literal attribute values today (no variable interpolation or function evaluation) — extending that resolution is welcome.
 - **Bicep parser.** `internal/parser/bicep` is a native brace-depth scanner (no `bicep build`/ARM compilation step) that translates ARM property names to the same canonical attribute keys Terraform's azurerm provider uses. Adding more ARM resource type mappings (`armAttrKeyMap`) is a good first contribution.
 - **Kubernetes parser.** `internal/parser/k8s` flattens Pod-template workloads to a pod-security attribute shape; Helm chart rendering (compiling a chart to manifests before scanning) isn't implemented yet.
+- **Drift detection.** `internal/drift` only compares the Azure resource types that already have an ARM property mapping in `internal/parser/bicep`'s `armAttrKeyMap` (adding a mapping there automatically extends drift coverage too — see `normalizedTypeToARMType` in `internal/drift/drift.go`).
 - **Documentation and examples.** Real-world insecure/secure IaC snippets in `examples/` make the project easier to trust and easier to test against.
 
 ## Pull request guidelines
