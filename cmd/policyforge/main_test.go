@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -530,6 +532,37 @@ func TestRunScan_UploadFlagPostsFindings(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "Uploaded to portal: "+srv.URL+"/scans/42") {
 		t.Errorf("expected an upload confirmation message, got:\n%s", stderr.String())
+	}
+}
+
+func TestRunScan_UploadWithBasicAuthCredentials(t *testing.T) {
+	var gotUser, gotPass string
+	var gotOK bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUser, gotPass, gotOK = r.BasicAuth()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{"id": 7, "url": "/scans/7"})
+	}))
+	defer srv.Close()
+
+	parsed, _ := url.Parse(srv.URL)
+	authURL := fmt.Sprintf("http://admin:s3cret@%s", parsed.Host)
+
+	var stdout, stderr bytes.Buffer
+	code := runScan([]string{"--path", "../../examples/insecure.tf", "--upload", authURL, "--org", "acme", "--project", "infra-repo"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d; stderr=%s", code, stderr.String())
+	}
+	if !gotOK || gotUser != "admin" || gotPass != "s3cret" {
+		t.Errorf("expected the server to receive Basic Auth admin:s3cret, got ok=%v user=%q pass=%q", gotOK, gotUser, gotPass)
+	}
+	if strings.Contains(stderr.String(), "s3cret") {
+		t.Errorf("expected the credential to be redacted from the printed confirmation, got:\n%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Uploaded to portal: http://"+parsed.Host+"/scans/7") {
+		t.Errorf("expected a credential-free confirmation URL, got:\n%s", stderr.String())
 	}
 }
 

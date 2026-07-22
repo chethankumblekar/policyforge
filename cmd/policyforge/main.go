@@ -17,7 +17,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/chethankumblekar/policyforge/internal/drift"
@@ -95,7 +97,7 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 	genSBOM := fs.Bool("sbom", false, "also generate an SBOM alongside scan results")
 	policyDir := fs.String("policy-dir", "", "optional path to a directory of additional user-authored .rego policy files")
 	provenanceOut := fs.String("provenance", "", "optional path to write a SLSA provenance predicate describing this scan run, for use with 'policyforge attest'")
-	uploadURL := fs.String("upload", "", "optional base URL of a PolicyForge portal (see enterprise/portal) to POST these findings to, e.g. http://localhost:8090")
+	uploadURL := fs.String("upload", "", "optional base URL of a PolicyForge portal (see enterprise/portal) to POST these findings to, e.g. http://localhost:8090 or http://user:pass@localhost:8090 if it requires Basic Auth")
 	org := fs.String("org", "", "organization name to tag the upload with (required with --upload)")
 	project := fs.String("project", "", "project name to tag the upload with (required with --upload)")
 	if err := fs.Parse(args); err != nil {
@@ -142,12 +144,12 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if *uploadURL != "" {
-		id, err := uploadFindings(*uploadURL, *org, *project, findings)
+		scanURL, _, err := uploadFindings(*uploadURL, *org, *project, findings)
 		if err != nil {
 			fmt.Fprintf(stderr, "upload error: %v\n", err)
 			return 1
 		}
-		fmt.Fprintf(stderr, "\nUploaded to portal: %s/scans/%d\n", *uploadURL, id)
+		fmt.Fprintf(stderr, "\nUploaded to portal: %s\n", scanURL)
 	}
 
 	if *provenanceOut != "" {
@@ -185,35 +187,58 @@ func materialFiles(resources []parser.Resource) []string {
 
 // uploadFindings POSTs findings to baseURL+"/api/scans" (see
 // enterprise/portal), tagged with org/project, and returns the assigned
-// scan ID.
-func uploadFindings(baseURL, org, project string, findings []engine.Finding) (int, error) {
+// scan's URL (with any embedded credentials stripped, so it's safe to
+// print) and ID. baseURL may embed HTTP Basic Auth credentials as
+// userinfo (e.g. "http://admin:secret@localhost:8090"), matching how the
+// portal gates access by default in real deployments — see
+// enterprise/portal/auth.go.
+func uploadFindings(baseURL, org, project string, findings []engine.Finding) (scanURL string, id int, err error) {
 	body, err := json.Marshal(struct {
 		Org      string           `json:"org"`
 		Project  string           `json:"project"`
 		Findings []engine.Finding `json:"findings"`
 	}{Org: org, Project: project, Findings: findings})
 	if err != nil {
-		return 0, fmt.Errorf("encoding upload payload: %w", err)
+		return "", 0, fmt.Errorf("encoding upload payload: %w", err)
 	}
 
-	resp, err := http.Post(baseURL+"/api/scans", "application/json", bytes.NewReader(body))
+	target, err := url.Parse(baseURL)
 	if err != nil {
-		return 0, fmt.Errorf("posting to %s: %w", baseURL, err)
+		return "", 0, fmt.Errorf("parsing --upload URL %q: %w", baseURL, err)
+	}
+	user := target.User
+	target.User = nil
+	sanitizedBase := target.String()
+	target.Path = strings.TrimSuffix(target.Path, "/") + "/api/scans"
+
+	req, err := http.NewRequest(http.MethodPost, target.String(), bytes.NewReader(body))
+	if err != nil {
+		return "", 0, fmt.Errorf("building upload request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if user != nil {
+		pass, _ := user.Password()
+		req.SetBasicAuth(user.Username(), pass)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", 0, fmt.Errorf("posting to %s: %w", sanitizedBase, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
 		msg, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("portal returned %s: %s", resp.Status, string(msg))
+		return "", 0, fmt.Errorf("portal returned %s: %s", resp.Status, string(msg))
 	}
 
 	var decoded struct {
 		ID int `json:"id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return 0, fmt.Errorf("decoding portal response: %w", err)
+		return "", 0, fmt.Errorf("decoding portal response: %w", err)
 	}
-	return decoded.ID, nil
+	return fmt.Sprintf("%s/scans/%d", sanitizedBase, decoded.ID), decoded.ID, nil
 }
 
 // writeProvenance builds a SLSA provenance predicate and writes it as

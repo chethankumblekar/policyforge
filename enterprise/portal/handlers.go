@@ -63,7 +63,11 @@ func handleIngest(store *Store) http.HandlerFunc {
 			return
 		}
 
-		run := store.Add(req.Org, req.Project, req.Findings)
+		run, err := store.Add(req.Org, req.Project, req.Findings)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -81,10 +85,16 @@ func handleIndex(store *Store) http.HandlerFunc {
 			return
 		}
 
+		scans, err := store.All()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		data := struct {
 			Scans []ScanRun
 		}{
-			Scans: store.All(),
+			Scans: scans,
 		}
 
 		if err := render(w, "Scan runs", "index-content", data); err != nil {
@@ -102,7 +112,11 @@ func handleScanDetail(store *Store) http.HandlerFunc {
 			return
 		}
 
-		run, ok := store.Get(id)
+		run, ok, err := store.Get(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		if !ok {
 			http.NotFound(w, r)
 			return

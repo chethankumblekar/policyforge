@@ -1,9 +1,9 @@
-# Enterprise (planned)
+# Enterprise
 
-This directory holds the future enterprise tier: hosted dashboard, Entra ID SSO for the tool itself, org-wide policy management, audit trail, and compliance framework mapping (SOC2/PCI).
+This directory holds the enterprise tier: a self-hosted dashboard today, with org-wide policy management, an audit trail, compliance framework mapping (SOC2/PCI), and Entra ID SSO planned on top of it.
 
-See [`DESIGN.md`](DESIGN.md) for the scope/architecture sketch and the open product decisions (hosting model, licensing mechanics) still blocking a real implementation.
+See [`DESIGN.md`](DESIGN.md) for full scope. Two calls are made and built on: **self-hosted** (you run it; no PolicyForge-operated SaaS) and **network-gated access** (a shared Basic Auth credential, not license keys or per-user accounts yet).
 
-[`portal/`](portal) is a runnable **local prototype** of the ingestion API + dashboard — not the real product (no auth, no persistence, no license gating), but enough to see the `/api/scans` shape and dashboard UX working end to end with the OSS CLI's `scan --upload` flag. It's a separate Go module; the OSS CLI build doesn't depend on it.
+[`portal/`](portal) is the real (if still early) implementation: an ingestion API + dashboard, SQLite-persisted, Docker/Compose-packaged, HTTP Basic Auth-gated — wired to the OSS CLI's `scan --upload` flag. It's a separate Go module; the OSS CLI build doesn't depend on it. See `portal/README.md` to run it.
 
-This directory's boundary keeps the open-source core (everything outside it) and any future paid features cleanly separated, per the licensing model in the root [README](../README.md). Community support for the OSS core happens via GitHub issues. Enterprise support (SLA-backed) is planned as a separate offering once the real product exists.
+This directory's boundary keeps the open-source core (everything outside it) and any future paid features cleanly separated, per the licensing model in the root [README](../README.md). Community support for the OSS core happens via GitHub issues. Enterprise support (SLA-backed) is planned as a separate offering as the product matures.

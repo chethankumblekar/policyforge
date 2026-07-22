@@ -1,0 +1,16 @@
+services:
+  portal:
+    build: .
+    ports:
+      - "8090:8090"
+    volumes:
+      - portal-data:/data
+    environment:
+      # Required to actually protect this once it's reachable over a
+      # network — see auth.go: empty user/pass disables auth entirely.
+      PORTAL_AUTH_USER: "${PORTAL_AUTH_USER:-}"
+      PORTAL_AUTH_PASS: "${PORTAL_AUTH_PASS:-}"
+    restart: unless-stopped
+
+volumes:
+  portal-data:

@@ -1,13 +1,23 @@
 # Enterprise module — design doc
 
-**Status: a local, throwaway prototype of the ingestion API + dashboard
-now exists at [`portal/`](portal)** — it proves the shapes below actually
-work end to end (`policyforge scan --upload` → ingest → dashboard), but it
-is explicitly *not* the real product: no auth, no persistence, no license
-gating, no multi-tenant isolation, and it will very likely be thrown away
-once the "Open questions" below are answered and real implementation
-starts. Treat this doc as the scope/architecture sketch to align on before
-that real, production implementation begins.
+**Status: hosting model and licensing mechanics are decided (below);
+[`portal/`](portal) is now a real, self-hosted v1** — Docker/Compose
+packaged, SQLite-persisted, HTTP Basic Auth-gated — not a throwaway
+prototype anymore, though still short of the full Scope below (no Entra ID
+SSO yet, no audit trail, no compliance mapping, no SBOM/provenance
+ingestion). See `portal/README.md` for how to run it.
+
+**Decided:**
+- **Hosting model: self-hosted.** The customer runs `portal/` themselves
+  (Docker Compose is the packaged path today; a Helm chart for k8s-native
+  deployment is a natural fast-follow, not built yet). There is no
+  PolicyForge-operated SaaS.
+- **Licensing mechanics: network-gated.** There is no license-key logic in
+  the CLI or the portal — access is whoever has the URL and the shared
+  Basic Auth credential (`PORTAL_AUTH_USER`/`PORTAL_AUTH_PASS`). This is
+  intentionally the simplest thing that could work for a self-hosted
+  product; per-user accounts (Entra ID SSO, below) is the natural next
+  step if/when that coarseness stops being enough.
 
 ## What this is
 
@@ -40,23 +50,23 @@ visibility/governance on top, not a gate on core scanning functionality.
 
 The CLI already produces everything the dashboard needs as structured
 JSON (`--format json`, `--sbom`, `--provenance`) — no scanning logic
-duplicates into the hosted side. The integration point, now implemented
-against the prototype:
+duplicates into the hosted side. The integration point:
 
 ```
-policyforge scan --path . --upload http://localhost:8090 --org acme --project infra-repo
+policyforge scan --path . --upload http://admin:secret@localhost:8090 --org acme --project infra-repo
 ```
 
 `--upload` POSTs `{org, project, findings}` to `<url>/api/scans` (see
-`portal/handlers.go`). This mirrors how the GitHub Action/Azure DevOps
-task already run the CLI and act on its output; `--upload` is one more
-consumer of the same JSON shape, not a new code path through the scanner.
+`portal/handlers.go`), authenticating with HTTP Basic Auth if the URL
+carries `user:pass@` userinfo (matching `portal`'s own auth gate — see
+`portal/auth.go`). This mirrors how the GitHub Action/Azure DevOps task
+already run the CLI and act on its output; `--upload` is one more consumer
+of the same JSON shape, not a new code path through the scanner.
 
-**Not yet real:** per-org auth tokens, SBOM/provenance ingestion (only
-findings are posted today), and everything past ingestion (persistence,
-audit trail, compliance mapping) — the prototype's store is an in-memory
-map that resets on restart. Auth is the first thing that needs a real
-answer (see Open Questions #1/#2) before this could take real traffic.
+**Still not real:** SBOM/provenance ingestion (only findings are posted
+today), and everything past ingestion — audit trail, compliance mapping,
+Entra ID SSO for per-user dashboard login (Basic Auth is one shared
+credential, not accounts).
 
 ## Sketch data model
 
@@ -84,32 +94,22 @@ CompliancePack (a named rollup of RuleIDs -> a framework's control IDs, e.g. "SO
   this is a cross-repo rollup for teams who've outgrown per-repo SARIF
   uploads, not a replacement for them.
 
-## Open questions (block starting implementation)
+## Resolved
 
-1. **Hosting model** — self-hosted (a Docker Compose/Helm chart the
-   customer runs) vs. a fully hosted SaaS PolicyForge operates? This
-   changes almost every architecture decision below it (multi-tenancy
-   model, auth, data residency).
-2. **Licensing mechanics** — how is "enterprise tier" actually gated?
-   License key checked by the CLI's `--upload` flag, or purely by
-   whether the customer has network access to a hosted/self-hosted
-   ingestion endpoint they've paid for?
-3. **Tech stack** — no framework has been chosen yet; this doc
-   deliberately avoids prescribing one before the hosting model (#1) is
-   decided, since that choice constrains it (e.g. a self-hosted option
-   favors a single deployable binary/container over a multi-service
-   architecture).
-4. **Entra ID app registration ownership** — does PolicyForge run one
-   multi-tenant app registration customers consent to, or does each
-   customer register their own single-tenant app? Affects the SSO
-   integration code and onboarding flow.
-5. **Retention/data residency** — how long are ingested findings kept,
-   and does data residency (e.g. EU-only) need to be a per-org setting
-   from day one?
+1. ~~**Hosting model**~~ — self-hosted. See portal/Dockerfile + docker-compose.yml.
+2. ~~**Licensing mechanics**~~ — network-gated (shared Basic Auth credential, no license-key logic).
+3. **Tech stack** — Go + `database/sql` + `modernc.org/sqlite` (pure-Go, no CGO, so the Docker image stays a single static binary) + `html/template` for the dashboard. Chosen for consistency with the OSS CLI's own stack and because a self-hosted single-binary/single-container deployment doesn't need a separate frontend framework or a heavier database to start.
+
+## Open questions (block the next real increment)
+
+1. **Entra ID SSO vs. staying Basic-Auth-only** — is per-user login (with real audit attribution — "who ran this scan") worth the OIDC integration + Entra app registration ownership question (multi-tenant app customers consent to, vs. each customer registering their own), or does the shared-credential model cover enough real usage first? This blocks the audit trail item in Scope, since a meaningful audit log needs to know *who*, not just *that*.
+2. **Retention/data residency** — how long are ingested findings kept, and does data residency (e.g. EU-only) need to be a per-org setting? Not urgent while this is a single self-hosted SQLite file the customer already controls, but worth deciding before growing past that.
+3. **SBOM/provenance ingestion** — extend `/api/scans` to accept the SBOM and provenance predicate too (not just findings), and the dashboard to show attestation status per scan.
+4. **Multi-tenancy within one deployment** — today `org`/`project` are just free-text tags on a scan row, not real isolation (any Basic Auth-holder sees every org's data). Worth a real access-control model once more than one org shares a single self-hosted instance.
 
 ## Next step
 
-Once #1 and #2 above are answered, this doc should be extended with a
-concrete tech stack, API contract for `--upload`, and a first-milestone
-scope (likely: ingestion API + a read-only dashboard, before SSO/audit
-trail/compliance mapping).
+Pick one of the above — Entra ID SSO is the largest lift and the one most
+worth scoping carefully (OIDC flow, session storage, migrating away from
+the shared Basic Auth credential without breaking existing `--upload`
+scripts) before starting.

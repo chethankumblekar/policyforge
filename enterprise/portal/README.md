@@ -1,32 +1,48 @@
-# PolicyForge portal (local prototype)
+# PolicyForge portal
 
-A runnable, in-memory prototype of the ingestion API + dashboard sketched
-in [`../DESIGN.md`](../DESIGN.md). **This is not the real enterprise
-product** — no auth, no persistence (data is lost on restart), no
-multi-tenant isolation, no license gating. It exists so the `/api/scans`
-ingestion shape and dashboard UX can be seen running end to end before the
-open architecture questions in `DESIGN.md` (hosting model, licensing
-mechanics, tech stack) are settled.
+A self-hosted PolicyForge enterprise dashboard: an ingestion API
+(`POST /api/scans`) plus a small dashboard UI, backed by a local SQLite
+file. See [`../DESIGN.md`](../DESIGN.md) for full scope. Two decisions
+this v1 makes concrete:
+
+- **Self-hosted.** You run this yourself — there is no PolicyForge-operated
+  SaaS.
+- **Network-gated access.** No license-key logic anywhere; access is
+  whoever has the URL and the shared HTTP Basic Auth credential below.
+  Per-user accounts (Entra ID SSO) are a planned fast-follow, not built.
 
 It's a separate Go module (its own `go.mod`) so it never adds to the OSS
 CLI's own dependency graph — `go build ./...` at the repo root does not
 build or depend on this at all.
 
-## Run it
+## Run it with Docker Compose (recommended)
 
 ```bash
 cd enterprise/portal
-go run . --addr :8090
+PORTAL_AUTH_USER=admin PORTAL_AUTH_PASS=<a-real-secret> docker compose up -d
 ```
 
-Then, from another terminal, point the CLI at it:
+Data persists in a named Docker volume across restarts. **Set both
+`PORTAL_AUTH_USER`/`PORTAL_AUTH_PASS` before exposing this beyond
+localhost** — if either is empty, auth is disabled entirely.
+
+## Run it locally without Docker
 
 ```bash
-policyforge scan --path ./examples --upload http://localhost:8090 --org acme --project infra-repo
+cd enterprise/portal
+PORTAL_AUTH_USER=admin PORTAL_AUTH_PASS=secret go run . --addr :8090
 ```
 
-Open `http://localhost:8090` to see the scan list; click a scan to see its
-findings, with a severity summary and a per-finding table.
+## Point the CLI at it
+
+```bash
+policyforge scan --path . --upload http://admin:secret@localhost:8090 --org acme --project infra-repo
+```
+
+Embed Basic Auth credentials in the `--upload` URL as `user:pass@host`;
+omit them (`http://localhost:8090`) if you're running with auth disabled
+for local dev. Open `http://localhost:8090` to see the scan list; click a
+scan to see its findings, with a severity summary and a per-finding table.
 
 ## API
 
@@ -41,6 +57,15 @@ findings, with a severity summary and a per-finding table.
 ```
 
 Response: `{"id": 1, "url": "/scans/1"}`.
+
+## Configuration
+
+| Flag | Env var | Default | Purpose |
+|---|---|---|---|
+| `--addr` | — | `:8090` | Address to listen on |
+| `--db` | `PORTAL_DB_PATH` | `portal.db` | SQLite database file path |
+| `--auth-user` | `PORTAL_AUTH_USER` | *(empty)* | Basic Auth username; empty disables auth |
+| `--auth-pass` | `PORTAL_AUTH_PASS` | *(empty)* | Basic Auth password; empty disables auth |
 
 ## Tests
 

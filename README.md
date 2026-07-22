@@ -65,16 +65,16 @@ Point `--policy-dir` at a directory of your own `.rego` files to merge them in a
 
 `sign`/`attest` shell out to a `cosign` binary you install separately (no Sigstore client libraries are vendored into PolicyForge itself — see `internal/signer`), so cosign's own version and flags govern the exact behavior; `--bundle` is required by modern cosign (v3+) and records a Rekor transparency log entry, so it needs network access to `rekor.sigstore.dev` even when signing with a local key. `drift` only compares the Azure resource types the Rego rule pack already understands, and only attributes your IaC source actually declares — it won't invent an opinion about configuration you never specified.
 
-## Enterprise portal (local prototype)
+## Enterprise portal (self-hosted)
 
-`--upload` sends a scan's findings to a running instance of the local dashboard prototype under [`enterprise/portal`](enterprise/portal):
+`--upload` sends a scan's findings to a running instance of the self-hosted dashboard under [`enterprise/portal`](enterprise/portal) — SQLite-persisted, Docker/Compose-packaged, HTTP Basic Auth-gated:
 
 ```bash
-cd enterprise/portal && go run . --addr :8090   # in one terminal
-policyforge scan --path ./examples --upload http://localhost:8090 --org acme --project infra-repo   # in another
+cd enterprise/portal && PORTAL_AUTH_USER=admin PORTAL_AUTH_PASS=secret docker compose up -d   # in one terminal
+policyforge scan --path ./examples --upload http://admin:secret@localhost:8090 --org acme --project infra-repo   # in another
 ```
 
-Open `http://localhost:8090` to see the scan list and drill into findings. This is a throwaway prototype (in-memory, no auth) proving the ingestion/dashboard shape sketched in [`enterprise/DESIGN.md`](enterprise/DESIGN.md) — not the real enterprise product.
+Open `http://localhost:8090` (browser will prompt for the same credentials) to see the scan list and drill into findings. This is a real, if still early, implementation of the self-hosted enterprise tier scoped in [`enterprise/DESIGN.md`](enterprise/DESIGN.md) — SBOM/provenance ingestion, an audit trail, compliance mapping, and Entra ID SSO for per-user login are still ahead of it.
 
 ## How it works
 

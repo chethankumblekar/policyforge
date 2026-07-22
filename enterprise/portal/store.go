@@ -1,9 +1,12 @@
 package main
 
 import (
-	"sort"
-	"sync"
+	"database/sql"
+	"encoding/json"
+	"fmt"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 // Finding mirrors the JSON shape of internal/engine.Finding (the OSS
@@ -39,57 +42,128 @@ func (s ScanRun) SeverityCounts() map[string]int {
 	return counts
 }
 
-// Store is a process-lifetime, in-memory scan run store. This is a local
-// prototype (see enterprise/DESIGN.md) — there is deliberately no
-// persistence, auth, or multi-tenancy isolation here yet.
+// Store persists scan runs in a SQLite database file (via the pure-Go,
+// CGO-free modernc.org/sqlite driver, so this stays a single static
+// binary in Docker) — real persistence, replacing the original in-memory
+// prototype, per enterprise/DESIGN.md's move toward a real self-hosted
+// product.
 type Store struct {
-	mu     sync.Mutex
-	nextID int
-	scans  []ScanRun
+	db *sql.DB
 }
 
-func NewStore() *Store {
-	return &Store{nextID: 1}
+// NewStore opens (creating if needed) a SQLite database at dbPath and
+// ensures its schema exists.
+func NewStore(dbPath string) (*Store, error) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("opening database %s: %w", dbPath, err)
+	}
+
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS scans (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			org           TEXT NOT NULL,
+			project       TEXT NOT NULL,
+			created_at    TEXT NOT NULL,
+			findings_json TEXT NOT NULL
+		)
+	`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("creating schema: %w", err)
+	}
+
+	return &Store{db: db}, nil
+}
+
+// Close closes the underlying database connection.
+func (s *Store) Close() error {
+	return s.db.Close()
 }
 
 // Add stores a new scan run and returns it with its assigned ID and
 // ingestion timestamp.
-func (s *Store) Add(org, project string, findings []Finding) ScanRun {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	run := ScanRun{
-		ID:        s.nextID,
-		Org:       org,
-		Project:   project,
-		CreatedAt: time.Now(),
-		Findings:  findings,
+func (s *Store) Add(org, project string, findings []Finding) (ScanRun, error) {
+	if findings == nil {
+		findings = []Finding{}
 	}
-	s.nextID++
-	s.scans = append(s.scans, run)
-	return run
+	findingsJSON, err := json.Marshal(findings)
+	if err != nil {
+		return ScanRun{}, fmt.Errorf("encoding findings: %w", err)
+	}
+
+	createdAt := time.Now()
+	res, err := s.db.Exec(
+		`INSERT INTO scans (org, project, created_at, findings_json) VALUES (?, ?, ?, ?)`,
+		org, project, createdAt.Format(time.RFC3339Nano), string(findingsJSON),
+	)
+	if err != nil {
+		return ScanRun{}, fmt.Errorf("inserting scan: %w", err)
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return ScanRun{}, fmt.Errorf("reading inserted scan id: %w", err)
+	}
+
+	return ScanRun{ID: int(id), Org: org, Project: project, CreatedAt: createdAt, Findings: findings}, nil
 }
 
 // All returns every scan run, most recently ingested first.
-func (s *Store) All() []ScanRun {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Store) All() ([]ScanRun, error) {
+	rows, err := s.db.Query(`SELECT id, org, project, created_at, findings_json FROM scans ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("querying scans: %w", err)
+	}
+	defer rows.Close()
 
-	out := make([]ScanRun, len(s.scans))
-	copy(out, s.scans)
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	return out
+	var out []ScanRun
+	for rows.Next() {
+		run, err := scanRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, run)
+	}
+	return out, rows.Err()
 }
 
 // Get looks up a scan run by ID.
-func (s *Store) Get(id int) (ScanRun, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Store) Get(id int) (ScanRun, bool, error) {
+	row := s.db.QueryRow(`SELECT id, org, project, created_at, findings_json FROM scans WHERE id = ?`, id)
 
-	for _, r := range s.scans {
-		if r.ID == id {
-			return r, true
-		}
+	run, err := scanRow(row)
+	if err == sql.ErrNoRows {
+		return ScanRun{}, false, nil
 	}
-	return ScanRun{}, false
+	if err != nil {
+		return ScanRun{}, false, err
+	}
+	return run, true, nil
+}
+
+// rowScanner is satisfied by both *sql.Row and *sql.Rows, so scanRow
+// works for Get's single-row lookup and All's multi-row iteration alike.
+type rowScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanRow(rs rowScanner) (ScanRun, error) {
+	var run ScanRun
+	var createdAt, findingsJSON string
+
+	if err := rs.Scan(&run.ID, &run.Org, &run.Project, &createdAt, &findingsJSON); err != nil {
+		return ScanRun{}, err
+	}
+
+	t, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return ScanRun{}, fmt.Errorf("parsing created_at: %w", err)
+	}
+	run.CreatedAt = t
+
+	if err := json.Unmarshal([]byte(findingsJSON), &run.Findings); err != nil {
+		return ScanRun{}, fmt.Errorf("decoding findings: %w", err)
+	}
+
+	return run, nil
 }
