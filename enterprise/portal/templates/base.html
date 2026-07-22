@@ -95,15 +95,15 @@
 <body>
 <header class="topbar">
   <div class="brand">PolicyForge</div>
-  <div class="muted small">portal (local prototype)</div>
+  <div class="muted small">self-hosted portal</div>
   <nav style="margin-left:auto"><a href="/">Scan runs</a></nav>
 </header>
 <main>
 {{.Body}}
 </main>
 <footer class="muted small">
-  Local prototype, in-memory only (data resets on restart) — no auth, no persistence, no multi-tenant isolation yet.
-  See <code>enterprise/DESIGN.md</code> for the real architecture plan.
+  Self-hosted PolicyForge enterprise portal — SQLite-persisted, HTTP Basic Auth-gated. No per-user accounts (Entra ID SSO), audit trail, or compliance mapping yet.
+  See <code>enterprise/DESIGN.md</code> for the full plan.
 </footer>
 </body>
 </html>
