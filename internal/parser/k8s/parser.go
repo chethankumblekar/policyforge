@@ -28,7 +28,14 @@ import (
 // Resource is the parsed shape shared across all IaC-language parsers.
 type Resource = parser.Resource
 
-// ParseDir walks dir and parses every *.yaml/*.yml file it finds.
+// ParseDir walks dir and parses every *.yaml/*.yml file it finds, except
+// inside Helm chart directories (any directory containing a Chart.yaml),
+// which internal/parser/helm handles exclusively — a chart's raw
+// templates/*.yaml files contain unrendered Go template syntax
+// (`{{ .Values.x }}`), not valid Kubernetes manifests, and parsing them
+// directly would at best duplicate what the Helm parser already
+// extracts from the rendered output and at worst silently misread a
+// value that happens to still parse as valid YAML once quoted.
 func ParseDir(dir string) ([]Resource, error) {
 	var all []Resource
 
@@ -36,7 +43,13 @@ func ParseDir(dir string) ([]Resource, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || (!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml")) {
+		if d.IsDir() {
+			if _, statErr := os.Stat(filepath.Join(path, "Chart.yaml")); statErr == nil {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") {
 			return nil
 		}
 		resources, ferr := ParseFile(path)
@@ -62,7 +75,17 @@ func ParseFile(path string) ([]Resource, error) {
 	}
 	defer f.Close()
 
-	dec := yaml.NewDecoder(f)
+	return ParseReader(f, path)
+}
+
+// ParseReader parses every YAML document read from r the same way
+// ParseFile does, attributing every resource found to sourceFile. This is
+// exported so other parsers whose YAML doesn't come from a single file on
+// disk — e.g. internal/parser/helm, which parses `helm template`'s
+// rendered stdout — can reuse the same Kubernetes-object extraction logic
+// instead of duplicating it.
+func ParseReader(r io.Reader, sourceFile string) ([]Resource, error) {
+	dec := yaml.NewDecoder(r)
 	var resources []Resource
 
 	for {
@@ -99,7 +122,7 @@ func ParseFile(path string) ([]Resource, error) {
 			Type:       kind,
 			Name:       kind + "/" + name,
 			Attributes: podSecurityAttributes(kind, raw),
-			File:       path,
+			File:       sourceFile,
 			Line:       doc.Content[0].Line,
 		})
 	}

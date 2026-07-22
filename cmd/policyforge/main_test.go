@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,12 +16,12 @@ import (
 )
 
 func TestParseAll_MergesAllLanguages(t *testing.T) {
-	resources, err := parseAll("../../examples")
+	resources, err := parseAll("../../examples", io.Discard)
 	if err != nil {
 		t.Fatalf("parseAll returned error: %v", err)
 	}
 
-	var haveTF, haveBicep, haveK8s bool
+	var haveTF, haveBicep, haveK8s, haveHelm bool
 	for _, r := range resources {
 		switch {
 		case strings.HasPrefix(r.Type, "azurerm_") || strings.HasPrefix(r.Type, "aws_"):
@@ -28,7 +29,11 @@ func TestParseAll_MergesAllLanguages(t *testing.T) {
 		case strings.HasPrefix(r.Type, "Microsoft."):
 			haveBicep = true
 		case r.Type == "Pod" || r.Type == "Deployment":
-			haveK8s = true
+			if strings.Contains(r.File, "insecure-helm-chart") {
+				haveHelm = true
+			} else {
+				haveK8s = true
+			}
 		}
 	}
 
@@ -39,12 +44,15 @@ func TestParseAll_MergesAllLanguages(t *testing.T) {
 		t.Error("expected at least one Bicep resource in the merged set")
 	}
 	if !haveK8s {
-		t.Error("expected at least one Kubernetes resource in the merged set")
+		t.Error("expected at least one plain Kubernetes resource in the merged set")
+	}
+	if _, err := exec.LookPath("helm"); err == nil && !haveHelm {
+		t.Error("expected at least one Helm-rendered resource in the merged set (helm is installed)")
 	}
 }
 
 func TestParseAll_SingleFile(t *testing.T) {
-	resources, err := parseAll("../../examples/insecure.tf")
+	resources, err := parseAll("../../examples/insecure.tf", io.Discard)
 	if err != nil {
 		t.Fatalf("parseAll returned error: %v", err)
 	}
@@ -54,8 +62,34 @@ func TestParseAll_SingleFile(t *testing.T) {
 }
 
 func TestParseAll_NonexistentPathErrors(t *testing.T) {
-	if _, err := parseAll("./does-not-exist"); err == nil {
+	if _, err := parseAll("./does-not-exist", io.Discard); err == nil {
 		t.Fatal("expected an error for a nonexistent path, got nil")
+	}
+}
+
+// TestParseAll_MissingHelmDowngradesToWarning proves a missing `helm`
+// binary doesn't abort scanning: it's an environment gap, not malformed
+// input, unlike a Terraform/Bicep/Kubernetes parse error. PATH is
+// cleared so this is deterministic regardless of whether helm actually
+// happens to be installed wherever this test runs.
+func TestParseAll_MissingHelmDowngradesToWarning(t *testing.T) {
+	t.Setenv("PATH", "")
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Chart.yaml"), []byte("apiVersion: v2\nname: test\nversion: 0.1.0\n"), 0o644); err != nil {
+		t.Fatalf("failed to write fixture: %v", err)
+	}
+
+	var warn bytes.Buffer
+	resources, err := parseAll(dir, &warn)
+	if err != nil {
+		t.Fatalf("expected no error (missing helm should warn, not fail the scan), got: %v", err)
+	}
+	if len(resources) != 0 {
+		t.Errorf("expected 0 resources, got %+v", resources)
+	}
+	if !strings.Contains(warn.String(), "helm not found") {
+		t.Errorf("expected a warning about missing helm, got:\n%s", warn.String())
 	}
 }
 

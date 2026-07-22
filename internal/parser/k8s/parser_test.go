@@ -166,3 +166,44 @@ func TestParseDir_NonexistentDirErrors(t *testing.T) {
 		t.Fatal("expected an error for a nonexistent directory, got nil")
 	}
 }
+
+// TestParseDir_SkipsHelmChartDirectories is a regression test: a Helm
+// chart's templates/*.yaml files contain unrendered Go template syntax
+// (e.g. `hostNetwork: {{ .Values.hostNetwork }}`), not valid Kubernetes
+// manifests. ParseDir must skip any directory containing a Chart.yaml
+// entirely — internal/parser/helm handles those exclusively, by
+// rendering the chart first — rather than attempt to parse the raw
+// templates directly, which can silently misparse a value that happens
+// to still be valid YAML once quoted.
+func TestParseDir_SkipsHelmChartDirectories(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Chart.yaml"), []byte("apiVersion: v2\nname: test\nversion: 0.1.0\n"), 0o644); err != nil {
+		t.Fatalf("failed to write fixture: %v", err)
+	}
+	templatesDir := filepath.Join(dir, "templates")
+	if err := os.MkdirAll(templatesDir, 0o755); err != nil {
+		t.Fatalf("failed to create templates dir: %v", err)
+	}
+	// This would fail to decode as valid YAML if parsed raw (an "invalid
+	// map key" error) — the important thing is ParseDir must not even
+	// try, since it should skip the whole chart directory.
+	if err := os.WriteFile(filepath.Join(templatesDir, "deployment.yaml"), []byte(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+spec:
+  template:
+    spec:
+      hostNetwork: {{ .Values.hostNetwork }}
+`), 0o644); err != nil {
+		t.Fatalf("failed to write fixture: %v", err)
+	}
+
+	resources, err := ParseDir(dir)
+	if err != nil {
+		t.Fatalf("ParseDir returned error (it should have skipped the chart directory, not attempted to parse it): %v", err)
+	}
+	if len(resources) != 0 {
+		t.Errorf("expected 0 resources — Helm chart directories should be skipped entirely, got %+v", resources)
+	}
+}

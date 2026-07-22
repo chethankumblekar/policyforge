@@ -1,10 +1,10 @@
 # PolicyForge
 
-**Open-source policy-as-code scanner for Terraform, Bicep, and Kubernetes — with Azure treated as a first-class citizen, not an afterthought.**
+**Open-source policy-as-code scanner for Terraform, Bicep, Kubernetes, and Helm — with Azure treated as a first-class citizen, not an afterthought.**
 
-Most IaC scanners are Terraform/CloudFormation-first and treat Bicep/ARM as a second-class format. PolicyForge flips that: Bicep and Azure Policy alignment get full support, alongside Terraform and Kubernetes manifests — the Azure Rego rule pack evaluates Terraform and Bicep resources identically, since both parsers normalize to the same canonical attribute names. It also generates a lightweight SBOM on every scan as a first step toward supply-chain visibility.
+Most IaC scanners are Terraform/CloudFormation-first and treat Bicep/ARM as a second-class format. PolicyForge flips that: Bicep and Azure Policy alignment get full support, alongside Terraform, Kubernetes manifests, and Helm charts — the Azure Rego rule pack evaluates Terraform and Bicep resources identically, since both parsers normalize to the same canonical attribute names. It also generates a lightweight SBOM on every scan as a first step toward supply-chain visibility.
 
-> **Status:** v0.1. The CLI runs end-to-end against Terraform, Bicep, and Kubernetes manifests, evaluating real OPA/Rego rule packs (embedded into the binary at build time). See [`docs/roadmap.md`](docs/roadmap.md).
+> **Status:** v0.1. The CLI runs end-to-end against Terraform, Bicep, Kubernetes manifests, and Helm charts, evaluating real OPA/Rego rule packs (embedded into the binary at build time). See [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Quick start
 
@@ -16,7 +16,7 @@ go build -o policyforge ./cmd/policyforge
 ./policyforge scan --path ./examples --format table
 ```
 
-`./examples` has fixtures for all three supported languages (Terraform, Bicep, Kubernetes) — a scan of the whole directory runs every parser and rule pack together:
+`./examples` has fixtures for every supported language (Terraform, Bicep, Kubernetes, Helm) — a scan of the whole directory runs every parser and rule pack together. Helm charts are rendered via a locally installed `helm template` before scanning (install [Helm](https://helm.sh/docs/intro/install/) to enable this — if it's missing, PolicyForge just warns and skips any charts it finds rather than failing the whole scan):
 
 ```
 RULE       SEVERITY   RESOURCE                                 LOCATION
@@ -28,8 +28,10 @@ PF-AZ-001  HIGH       examplestorage                           examples/insecure
            storage account "examplestorage" allows public blob access (CIS 3.6)
 PF-K8S-001 CRITICAL   Deployment/insecure-app                  examples/insecure-k8s.yaml:1
            "Deployment/insecure-app" runs a privileged container
+PF-K8S-001 CRITICAL   Deployment/insecure-helm-app             examples/insecure-helm-chart/templates/deployment.yaml:1
+           "Deployment/insecure-helm-app" runs a privileged container
 ...
-16 finding(s).
+21 finding(s).
 ```
 
 Other output formats and options:
@@ -77,7 +79,7 @@ Open `http://localhost:8090` to see the scan list and drill into findings. This 
 ## How it works
 
 ```
-IaC files (Terraform / Bicep / K8s)
+IaC files (Terraform / Bicep / K8s / Helm)
         │
         ▼
    Parser layer  →  Normalizer (unified resource model)  →  Policy engine  →  Findings
@@ -116,7 +118,7 @@ The PF-AZ-* rules are the same Rego files whether the resource came from Terrafo
 
 ```
 cmd/policyforge/        CLI entrypoint
-internal/parser/        Terraform, Bicep, Kubernetes parsers + the shared Resource type
+internal/parser/        Terraform, Bicep, Kubernetes, Helm parsers + the shared Resource type
 internal/normalizer/     Unified resource model
 internal/engine/         OPA/Rego policy evaluation + SARIF/JSON/table rendering
 internal/sbom/           SBOM generation
@@ -131,7 +133,7 @@ enterprise/              Design doc for the planned hosted/enterprise tier (noth
 
 ## Roadmap
 
-See [`docs/roadmap.md`](docs/roadmap.md) for the phased plan and what's left — Helm chart parsing and the enterprise dashboard tier are the two largest open items.
+See [`docs/roadmap.md`](docs/roadmap.md) for the phased plan and what's left — the real, production enterprise dashboard tier is the largest open item.
 
 ## License
 

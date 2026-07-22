@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ import (
 	"github.com/chethankumblekar/policyforge/internal/normalizer"
 	"github.com/chethankumblekar/policyforge/internal/parser"
 	"github.com/chethankumblekar/policyforge/internal/parser/bicep"
+	"github.com/chethankumblekar/policyforge/internal/parser/helm"
 	"github.com/chethankumblekar/policyforge/internal/parser/k8s"
 	"github.com/chethankumblekar/policyforge/internal/parser/terraform"
 	"github.com/chethankumblekar/policyforge/internal/provenance"
@@ -107,7 +109,7 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 	startedOn := time.Now()
 
 	// 1. Parse every supported IaC language found in the target path.
-	resources, err := parseAll(*path)
+	resources, err := parseAll(*path, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "parse error: %v\n", err)
 		return 1
@@ -306,7 +308,7 @@ func runDrift(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	resources, err := parseAll(*path)
+	resources, err := parseAll(*path, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "parse error: %v\n", err)
 		return 1
@@ -352,7 +354,17 @@ func printDriftResult(w io.Writer, result drift.Result) {
 // Kubernetes) over path and merges their results. Each parser only acts
 // on the file extensions it owns, so this is safe to call on a directory
 // containing a mix of IaC languages, or on a single file.
-func parseAll(path string) ([]parser.Resource, error) {
+// parseAll runs every language-specific parser (Terraform, Bicep,
+// Kubernetes, Helm) over path and merges their results. Each parser only
+// acts on the file extensions/markers it owns, so this is safe to call on
+// a directory containing a mix of IaC languages, or on a single file.
+//
+// A missing `helm` binary is downgraded to a warning written to warn
+// rather than a fatal error: unlike Terraform/Bicep/Kubernetes, which
+// never need an external tool, Helm charts can't be rendered without one
+// installed — that's an environment gap, not malformed input, and
+// shouldn't abort scanning every other IaC file in the same repo.
+func parseAll(path string, warn io.Writer) ([]parser.Resource, error) {
 	var all []parser.Resource
 
 	tf, err := terraform.ParseDir(path)
@@ -372,6 +384,16 @@ func parseAll(path string) ([]parser.Resource, error) {
 		return nil, fmt.Errorf("kubernetes: %w", err)
 	}
 	all = append(all, kr...)
+
+	hr, err := helm.ParseDir(path)
+	if err != nil {
+		if errors.Is(err, helm.ErrHelmNotInstalled) {
+			fmt.Fprintf(warn, "warning: %v — skipping any Helm charts found under %s\n", err, path)
+		} else {
+			return nil, fmt.Errorf("helm: %w", err)
+		}
+	}
+	all = append(all, hr...)
 
 	return all, nil
 }
