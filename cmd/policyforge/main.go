@@ -12,6 +12,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/chethankumblekar/policyforge/internal/engine"
@@ -26,27 +27,38 @@ import (
 const version = "0.1.0-dev"
 
 func main() {
-	if len(os.Args) < 2 {
-		usage()
-		os.Exit(1)
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run executes the CLI and returns the process exit code. Everything
+// below this is written against explicit stdout/stderr writers instead of
+// calling fmt.Print*/os.Exit directly, so the whole command surface is
+// exercised by cmd/policyforge's tests in-process rather than via a
+// subprocess.
+func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 1 {
+		usage(stdout)
+		return 1
 	}
 
-	switch os.Args[1] {
+	switch args[0] {
 	case "scan":
-		runScan(os.Args[2:])
+		return runScan(args[1:], stdout, stderr)
 	case "version":
-		fmt.Println("policyforge version", version)
+		fmt.Fprintln(stdout, "policyforge version", version)
+		return 0
 	case "help", "-h", "--help":
-		usage()
+		usage(stdout)
+		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", os.Args[1])
-		usage()
-		os.Exit(1)
+		fmt.Fprintf(stderr, "unknown command: %s\n\n", args[0])
+		usage(stdout)
+		return 1
 	}
 }
 
-func usage() {
-	fmt.Println(`policyforge - open-source policy-as-code scanner for Terraform, Bicep, and Kubernetes
+func usage(w io.Writer) {
+	fmt.Fprintln(w, `policyforge - open-source policy-as-code scanner for Terraform, Bicep, and Kubernetes
 
 Commands:
   scan      Scan IaC files against policy rule packs
@@ -55,19 +67,22 @@ Commands:
 Run 'policyforge scan --help' for scan options.`)
 }
 
-func runScan(args []string) {
-	fs := flag.NewFlagSet("scan", flag.ExitOnError)
+func runScan(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	path := fs.String("path", ".", "path to a directory of IaC files to scan")
 	format := fs.String("format", "table", "output format: table | sarif | json")
 	genSBOM := fs.Bool("sbom", false, "also generate an SBOM alongside scan results")
 	policyDir := fs.String("policy-dir", "", "optional path to a directory of additional user-authored .rego policy files")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	// 1. Parse every supported IaC language found in the target path.
 	resources, err := parseAll(*path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "parse error: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "parse error: %v\n", err)
+		return 1
 	}
 
 	// 2. Normalize into the unified internal resource model.
@@ -77,28 +92,29 @@ func runScan(args []string) {
 	// policy pack the user pointed --policy-dir at.
 	findings, err := engine.Evaluate(context.Background(), normalized, *policyDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "policy evaluation error: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "policy evaluation error: %v\n", err)
+		return 1
 	}
 
 	switch *format {
 	case "sarif":
-		fmt.Println(engine.ToSARIF(findings))
+		fmt.Fprintln(stdout, engine.ToSARIF(findings))
 	case "json":
-		fmt.Println(engine.ToJSON(findings))
+		fmt.Fprintln(stdout, engine.ToJSON(findings))
 	default:
-		engine.PrintTable(findings)
+		engine.PrintTable(stdout, findings)
 	}
 
 	if *genSBOM {
 		doc := sbom.Generate(normalized)
-		fmt.Fprintln(os.Stderr, "\nSBOM generated:")
-		fmt.Println(sbom.ToJSON(doc))
+		fmt.Fprintln(stderr, "\nSBOM generated:")
+		fmt.Fprintln(stdout, sbom.ToJSON(doc))
 	}
 
 	if engine.HasFailures(findings) {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // parseAll runs every language-specific parser (Terraform, Bicep,

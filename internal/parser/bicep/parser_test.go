@@ -1,6 +1,10 @@
 package bicep
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseFile_ExtractsResourceAndAttributes(t *testing.T) {
 	resources, err := ParseFile("../../../examples/insecure.bicep")
@@ -32,5 +36,73 @@ func TestParseFile_ExtractsResourceAndAttributes(t *testing.T) {
 	}
 	if kv.Attributes["purge_protection_enabled"] != "false" {
 		t.Errorf("expected purge_protection_enabled=false, got %q", kv.Attributes["purge_protection_enabled"])
+	}
+}
+
+func TestParseFile_UnmappedResourceTypeHasNoAttributes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "unmapped.bicep")
+	if err := os.WriteFile(path, []byte(`resource plan 'Microsoft.Web/serverfarms@2023-01-01' = {
+  name: 'exampleplan'
+  location: 'centralindia'
+  properties: {
+    reserved: true
+  }
+}
+`), 0o644); err != nil {
+		t.Fatalf("failed to write fixture: %v", err)
+	}
+
+	resources, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(resources))
+	}
+	if resources[0].Name != "exampleplan" {
+		t.Errorf("expected name exampleplan, got %s", resources[0].Name)
+	}
+	if len(resources[0].Attributes) != 0 {
+		t.Errorf("expected no attributes for an ARM type with no key mapping, got %+v", resources[0].Attributes)
+	}
+}
+
+func TestParseFile_MissingNameDefaultsToUnnamed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "noname.bicep")
+	if err := os.WriteFile(path, []byte(`resource sa 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+  location: 'centralindia'
+  properties: {
+    allowBlobPublicAccess: true
+  }
+}
+`), 0o644); err != nil {
+		t.Fatalf("failed to write fixture: %v", err)
+	}
+
+	resources, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	if resources[0].Name != "unnamed" {
+		t.Errorf("expected default name \"unnamed\", got %q", resources[0].Name)
+	}
+}
+
+func TestParseDir_WalksDirectoryAndAggregatesResources(t *testing.T) {
+	resources, err := ParseDir("../../../examples")
+	if err != nil {
+		t.Fatalf("ParseDir returned error: %v", err)
+	}
+	// insecure.bicep has 3 resources; ParseDir only visits *.bicep files,
+	// so the Terraform/Kubernetes fixtures in the same directory must not
+	// contribute any.
+	if len(resources) != 3 {
+		t.Fatalf("expected 3 resources from the .bicep fixture, got %d", len(resources))
+	}
+}
+
+func TestParseDir_NonexistentDirErrors(t *testing.T) {
+	if _, err := ParseDir(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
+		t.Fatal("expected an error for a nonexistent directory, got nil")
 	}
 }

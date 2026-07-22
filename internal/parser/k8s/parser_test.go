@@ -64,3 +64,105 @@ steps:
 		t.Errorf("expected 0 resources for YAML without kind/apiVersion, got %d", len(resources))
 	}
 }
+
+func TestParseFile_CronJobNestedPodSpec(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cronjob.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-cleanup
+spec:
+  schedule: "0 0 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          hostNetwork: true
+          containers:
+            - name: cleanup
+              image: example/cleanup:latest
+`), 0o644); err != nil {
+		t.Fatalf("failed to write fixture: %v", err)
+	}
+
+	resources, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(resources))
+	}
+	if resources[0].Attributes["host_network"] != "true" {
+		t.Errorf("expected host_network=true reached through CronJob's nested jobTemplate.spec.template.spec, got %q", resources[0].Attributes["host_network"])
+	}
+	if resources[0].Attributes["missing_resource_limits"] != "true" {
+		t.Errorf("expected missing_resource_limits=true, got %q", resources[0].Attributes["missing_resource_limits"])
+	}
+}
+
+func TestParseFile_UnsupportedKindHasNoSecurityAttributes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "configmap.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  key: value
+`), 0o644); err != nil {
+		t.Fatalf("failed to write fixture: %v", err)
+	}
+
+	resources, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(resources))
+	}
+	if resources[0].Type != "ConfigMap" {
+		t.Errorf("expected type ConfigMap, got %s", resources[0].Type)
+	}
+	if len(resources[0].Attributes) != 0 {
+		t.Errorf("expected no pod-security attributes for a kind with no pod spec, got %+v", resources[0].Attributes)
+	}
+}
+
+func TestParseFile_MissingMetadataNameDefaultsToUnnamed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "noname.yaml")
+	if err := os.WriteFile(path, []byte(`apiVersion: v1
+kind: Pod
+spec:
+  containers:
+    - name: app
+      image: example/app:latest
+`), 0o644); err != nil {
+		t.Fatalf("failed to write fixture: %v", err)
+	}
+
+	resources, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile returned error: %v", err)
+	}
+	if resources[0].Name != "Pod/unnamed" {
+		t.Errorf("expected name \"Pod/unnamed\", got %q", resources[0].Name)
+	}
+}
+
+func TestParseDir_WalksDirectoryAndAggregatesResources(t *testing.T) {
+	resources, err := ParseDir("../../../examples")
+	if err != nil {
+		t.Fatalf("ParseDir returned error: %v", err)
+	}
+	// insecure-k8s.yaml has 2 documents (Deployment + Pod); ParseDir only
+	// visits *.yaml/*.yml files, so the Terraform/Bicep fixtures in the
+	// same directory must not contribute any.
+	if len(resources) != 2 {
+		t.Fatalf("expected 2 resources from the .yaml fixture, got %d", len(resources))
+	}
+}
+
+func TestParseDir_NonexistentDirErrors(t *testing.T) {
+	if _, err := ParseDir(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
+		t.Fatal("expected an error for a nonexistent directory, got nil")
+	}
+}

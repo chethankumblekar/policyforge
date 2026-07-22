@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"github.com/chethankumblekar/policyforge/internal/normalizer"
 )
@@ -53,19 +54,19 @@ func HasFailures(findings []Finding) bool {
 	return false
 }
 
-// PrintTable writes a human-readable findings table to stdout.
-func PrintTable(findings []Finding) {
+// PrintTable writes a human-readable findings table to w.
+func PrintTable(w io.Writer, findings []Finding) {
 	if len(findings) == 0 {
-		fmt.Println("✔ No policy violations found.")
+		fmt.Fprintln(w, "✔ No policy violations found.")
 		return
 	}
 
-	fmt.Printf("%-10s %-10s %-40s %s\n", "RULE", "SEVERITY", "RESOURCE", "LOCATION")
+	fmt.Fprintf(w, "%-10s %-10s %-40s %s\n", "RULE", "SEVERITY", "RESOURCE", "LOCATION")
 	for _, f := range findings {
-		fmt.Printf("%-10s %-10s %-40s %s:%d\n", f.RuleID, f.Severity, f.Resource, f.File, f.Line)
-		fmt.Printf("           %s\n", f.Title)
+		fmt.Fprintf(w, "%-10s %-10s %-40s %s:%d\n", f.RuleID, f.Severity, f.Resource, f.File, f.Line)
+		fmt.Fprintf(w, "           %s\n", f.Title)
 	}
-	fmt.Printf("\n%d finding(s).\n", len(findings))
+	fmt.Fprintf(w, "\n%d finding(s).\n", len(findings))
 }
 
 // ToJSON renders findings as a JSON array.
