@@ -1,9 +1,13 @@
 # Enterprise module — design doc
 
-**Status: planning only. Nothing in this document is built.** This is a
-scope/architecture sketch to align on before any hosted code gets
-written — see "Open questions" at the end for the decisions that block
-starting implementation.
+**Status: a local, throwaway prototype of the ingestion API + dashboard
+now exists at [`portal/`](portal)** — it proves the shapes below actually
+work end to end (`policyforge scan --upload` → ingest → dashboard), but it
+is explicitly *not* the real product: no auth, no persistence, no license
+gating, no multi-tenant isolation, and it will very likely be thrown away
+once the "Open questions" below are answered and real implementation
+starts. Treat this doc as the scope/architecture sketch to align on before
+that real, production implementation begins.
 
 ## What this is
 
@@ -32,24 +36,27 @@ visibility/governance on top, not a gate on core scanning functionality.
   tagged with e.g. "CIS Azure Foundations 3.6") into SOC2/PCI control
   coverage reports.
 
-## How the OSS CLI would connect (sketch)
+## How the OSS CLI connects
 
 The CLI already produces everything the dashboard needs as structured
 JSON (`--format json`, `--sbom`, `--provenance`) — no scanning logic
-duplicates into the hosted side. The integration point is additive:
+duplicates into the hosted side. The integration point, now implemented
+against the prototype:
 
 ```
-policyforge scan --path . --format json --upload \
-  --org-token $POLICYFORGE_ORG_TOKEN
+policyforge scan --path . --upload http://localhost:8090 --org acme --project infra-repo
 ```
 
-`--upload` would POST the scan's JSON findings (+ SBOM/provenance, if
-generated) to the hosted ingestion API, authenticated by a per-org token
-(rotatable, scoped to write-only ingestion — never a credential capable of
-reading other orgs' data). This mirrors how the GitHub Action/Azure
-DevOps task already run the CLI and act on its output; `--upload` is one
-more consumer of the same JSON shape, not a new code path through the
-scanner.
+`--upload` POSTs `{org, project, findings}` to `<url>/api/scans` (see
+`portal/handlers.go`). This mirrors how the GitHub Action/Azure DevOps
+task already run the CLI and act on its output; `--upload` is one more
+consumer of the same JSON shape, not a new code path through the scanner.
+
+**Not yet real:** per-org auth tokens, SBOM/provenance ingestion (only
+findings are posted today), and everything past ingestion (persistence,
+audit trail, compliance mapping) — the prototype's store is an in-memory
+map that resets on restart. Auth is the first thing that needs a real
+answer (see Open Questions #1/#2) before this could take real traffic.
 
 ## Sketch data model
 

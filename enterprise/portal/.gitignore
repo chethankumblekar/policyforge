@@ -1,0 +1,3 @@
+# Compiled binary — `go build ./...` in this directory writes it here by
+# default (no -o), which is how one slipped into a commit once already.
+/portal

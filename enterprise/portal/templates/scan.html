@@ -1,0 +1,33 @@
+{{define "scan-content"}}
+<p><a href="/">&larr; All scans</a></p>
+<h1>Scan #{{.Scan.ID}} — {{.Scan.Org}} / {{.Scan.Project}}</h1>
+<p class="muted">{{.Scan.CreatedAt.Format "Mon Jan 2 2006, 15:04:05 MST"}}</p>
+
+<div class="tiles">
+  <div class="tile critical"><div class="tile-value">{{index .Counts "CRITICAL"}}</div><div class="tile-label">Critical</div></div>
+  <div class="tile high"><div class="tile-value">{{index .Counts "HIGH"}}</div><div class="tile-label">High</div></div>
+  <div class="tile medium"><div class="tile-value">{{index .Counts "MEDIUM"}}</div><div class="tile-label">Medium</div></div>
+  <div class="tile low"><div class="tile-value">{{index .Counts "LOW"}}</div><div class="tile-label">Low</div></div>
+</div>
+
+{{if not .Scan.Findings}}
+<p class="empty">✔ No policy violations in this scan.</p>
+{{else}}
+<table>
+<thead>
+<tr><th>Rule</th><th>Severity</th><th>Resource</th><th>Location</th><th>Title</th></tr>
+</thead>
+<tbody>
+{{range .Scan.Findings}}
+<tr>
+  <td><code>{{.RuleID}}</code></td>
+  <td><span class="badge sev-{{.Severity | lower}}">{{.Severity}}</span></td>
+  <td>{{.Resource}}</td>
+  <td class="muted small">{{.File}}:{{.Line}}</td>
+  <td>{{.Title}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+{{end}}

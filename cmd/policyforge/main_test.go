@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -449,5 +451,79 @@ func TestPrintDriftResult_WithFindingsAndNotFound(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected drift output to contain %q, got:\n%s", want, out)
 		}
+	}
+}
+
+func TestRunScan_UploadRequiresOrgAndProject(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runScan([]string{"--path", "../../examples/insecure.tf", "--upload", "http://localhost:0"}, &stdout, &stderr)
+
+	if code != 2 {
+		t.Fatalf("expected exit code 2 when --org/--project are missing, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "--org and --project are required") {
+		t.Errorf("expected an error about missing --org/--project, got:\n%s", stderr.String())
+	}
+}
+
+func TestRunScan_UploadFlagPostsFindings(t *testing.T) {
+	var gotBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/scans" || r.Method != http.MethodPost {
+			t.Errorf("expected POST /api/scans, got %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("failed to decode upload body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{"id": 42, "url": "/scans/42"})
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := runScan([]string{"--path", "../../examples/insecure.tf", "--upload", srv.URL, "--org", "acme", "--project", "infra-repo"}, &stdout, &stderr)
+
+	if code != 1 { // insecure.tf has HIGH/CRITICAL findings
+		t.Fatalf("expected exit code 1, got %d; stderr=%s", code, stderr.String())
+	}
+	if gotBody["org"] != "acme" || gotBody["project"] != "infra-repo" {
+		t.Errorf("expected org=acme project=infra-repo in the upload body, got %+v", gotBody)
+	}
+	findings, _ := gotBody["findings"].([]interface{})
+	if len(findings) == 0 {
+		t.Error("expected the upload body to include findings")
+	}
+	if !strings.Contains(stderr.String(), "Uploaded to portal: "+srv.URL+"/scans/42") {
+		t.Errorf("expected an upload confirmation message, got:\n%s", stderr.String())
+	}
+}
+
+func TestRunScan_UploadServerErrorSurfaces(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := runScan([]string{"--path", "../../examples/insecure.tf", "--upload", srv.URL, "--org", "acme", "--project", "infra-repo"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "upload error") {
+		t.Errorf("expected an upload error message, got:\n%s", stderr.String())
+	}
+}
+
+func TestRunScan_UploadUnreachablePortalSurfacesError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runScan([]string{"--path", "../../examples/insecure.tf", "--upload", "http://127.0.0.1:1", "--org", "acme", "--project", "infra-repo"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "upload error") {
+		t.Errorf("expected an upload error message, got:\n%s", stderr.String())
 	}
 }

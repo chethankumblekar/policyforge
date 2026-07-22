@@ -9,10 +9,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -90,7 +93,14 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 	genSBOM := fs.Bool("sbom", false, "also generate an SBOM alongside scan results")
 	policyDir := fs.String("policy-dir", "", "optional path to a directory of additional user-authored .rego policy files")
 	provenanceOut := fs.String("provenance", "", "optional path to write a SLSA provenance predicate describing this scan run, for use with 'policyforge attest'")
+	uploadURL := fs.String("upload", "", "optional base URL of a PolicyForge portal (see enterprise/portal) to POST these findings to, e.g. http://localhost:8090")
+	org := fs.String("org", "", "organization name to tag the upload with (required with --upload)")
+	project := fs.String("project", "", "project name to tag the upload with (required with --upload)")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *uploadURL != "" && (*org == "" || *project == "") {
+		fmt.Fprintln(stderr, "scan error: --org and --project are required with --upload")
 		return 2
 	}
 
@@ -129,6 +139,15 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, sbom.ToJSON(doc))
 	}
 
+	if *uploadURL != "" {
+		id, err := uploadFindings(*uploadURL, *org, *project, findings)
+		if err != nil {
+			fmt.Fprintf(stderr, "upload error: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stderr, "\nUploaded to portal: %s/scans/%d\n", *uploadURL, id)
+	}
+
 	if *provenanceOut != "" {
 		if err := writeProvenance(*provenanceOut, map[string]string{
 			"path":      *path,
@@ -160,6 +179,39 @@ func materialFiles(resources []parser.Resource) []string {
 		files = append(files, r.File)
 	}
 	return files
+}
+
+// uploadFindings POSTs findings to baseURL+"/api/scans" (see
+// enterprise/portal), tagged with org/project, and returns the assigned
+// scan ID.
+func uploadFindings(baseURL, org, project string, findings []engine.Finding) (int, error) {
+	body, err := json.Marshal(struct {
+		Org      string           `json:"org"`
+		Project  string           `json:"project"`
+		Findings []engine.Finding `json:"findings"`
+	}{Org: org, Project: project, Findings: findings})
+	if err != nil {
+		return 0, fmt.Errorf("encoding upload payload: %w", err)
+	}
+
+	resp, err := http.Post(baseURL+"/api/scans", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return 0, fmt.Errorf("posting to %s: %w", baseURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		msg, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("portal returned %s: %s", resp.Status, string(msg))
+	}
+
+	var decoded struct {
+		ID int `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return 0, fmt.Errorf("decoding portal response: %w", err)
+	}
+	return decoded.ID, nil
 }
 
 // writeProvenance builds a SLSA provenance predicate and writes it as

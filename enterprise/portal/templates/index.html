@@ -1,0 +1,30 @@
+{{define "index-content"}}
+<h1>Scan runs</h1>
+<p class="muted">Every scan ingested via <code>POST /api/scans</code> (e.g. <code>policyforge scan --upload</code>).</p>
+
+{{if not .Scans}}
+<p class="empty">No scans ingested yet. Run:<br><br>
+<code>policyforge scan --path . --upload http://localhost:8090 --org acme --project infra-repo</code></p>
+{{else}}
+<table>
+<thead>
+<tr><th>Scan</th><th>Org / Project</th><th>When</th><th>Critical</th><th>High</th><th>Medium</th><th>Low</th><th>Total</th></tr>
+</thead>
+<tbody>
+{{range .Scans}}
+{{$counts := .SeverityCounts}}
+<tr>
+  <td><a href="/scans/{{.ID}}">#{{.ID}}</a></td>
+  <td>{{.Org}} / {{.Project}}</td>
+  <td>{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td>
+  <td>{{index $counts "CRITICAL"}}</td>
+  <td>{{index $counts "HIGH"}}</td>
+  <td>{{index $counts "MEDIUM"}}</td>
+  <td>{{index $counts "LOW"}}</td>
+  <td>{{len .Findings}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+{{end}}

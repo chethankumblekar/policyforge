@@ -1,0 +1,8 @@
+# Compiled CLI binary (README's quick start builds this in the repo root)
+/policyforge
+
+# Coverage profiles from `go test -coverprofile`
+*.out
+
+# Editor/OS cruft
+.DS_Store
