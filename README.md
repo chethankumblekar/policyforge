@@ -67,14 +67,14 @@ Point `--policy-dir` at a directory of your own `.rego` files to merge them in a
 
 ## Enterprise portal (self-hosted)
 
-`--upload` sends a scan's findings to a running instance of the self-hosted dashboard under [`enterprise/portal`](enterprise/portal) — SQLite-persisted, Docker/Compose-packaged, HTTP Basic Auth-gated:
+`--upload` sends a scan's findings to a running instance of the self-hosted dashboard under [`enterprise/portal`](enterprise/portal) — SQLite-persisted, Docker/Compose-packaged, HTTP Basic Auth for the ingestion API, and real per-user dashboard login via OIDC/Entra ID SSO if you configure it:
 
 ```bash
 cd enterprise/portal && PORTAL_AUTH_USER=admin PORTAL_AUTH_PASS=secret docker compose up -d   # in one terminal
 policyforge scan --path ./examples --upload http://admin:secret@localhost:8090 --org acme --project infra-repo   # in another
 ```
 
-Open `http://localhost:8090` (browser will prompt for the same credentials) to see the scan list and drill into findings. This is a real, if still early, implementation of the self-hosted enterprise tier scoped in [`enterprise/DESIGN.md`](enterprise/DESIGN.md) — SBOM/provenance ingestion, an audit trail, compliance mapping, and Entra ID SSO for per-user login are still ahead of it.
+Open `http://localhost:8090` (browser will prompt for the same credentials, or your IdP's login if you've set `OIDC_*` — see `enterprise/portal/README.md`) to see the scan list and drill into findings. This is a real, if still early, implementation of the self-hosted enterprise tier scoped in [`enterprise/DESIGN.md`](enterprise/DESIGN.md) — SBOM/provenance ingestion, an audit trail, and compliance mapping are still ahead of it.
 
 ## How it works
 

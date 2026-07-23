@@ -96,7 +96,10 @@
 <header class="topbar">
   <div class="brand">PolicyForge</div>
   <div class="muted small">self-hosted portal</div>
-  <nav style="margin-left:auto"><a href="/">Scan runs</a></nav>
+  <nav style="margin-left:auto; display:flex; align-items:center; gap:16px;">
+    <a href="/">Scan runs</a>
+    {{if .User}}<span class="muted small">{{.User}}</span> · <a href="/logout">Logout</a>{{end}}
+  </nav>
 </header>
 <main>
 {{.Body}}

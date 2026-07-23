@@ -6,10 +6,19 @@ services:
     volumes:
       - portal-data:/data
     environment:
-      # Required to actually protect this once it's reachable over a
-      # network — see auth.go: empty user/pass disables auth entirely.
+      # Required to actually protect /api/scans once this is reachable
+      # over a network — see auth.go: empty user/pass disables auth
+      # entirely.
       PORTAL_AUTH_USER: "${PORTAL_AUTH_USER:-}"
       PORTAL_AUTH_PASS: "${PORTAL_AUTH_PASS:-}"
+      # Optional: require real per-user dashboard login via OIDC/Entra ID
+      # SSO instead of falling back to the Basic Auth credential above —
+      # see sso.go and README.md's "Dashboard SSO" section. Leave unset to
+      # keep using Basic Auth for the dashboard too.
+      OIDC_ISSUER_URL: "${OIDC_ISSUER_URL:-}"
+      OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
+      OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:-}"
+      OIDC_REDIRECT_URL: "${OIDC_REDIRECT_URL:-}"
     restart: unless-stopped
 
 volumes:

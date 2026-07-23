@@ -1,11 +1,12 @@
 # Enterprise module — design doc
 
 **Status: hosting model and licensing mechanics are decided (below);
-[`portal/`](portal) is now a real, self-hosted v1** — Docker/Compose
-packaged, SQLite-persisted, HTTP Basic Auth-gated — not a throwaway
-prototype anymore, though still short of the full Scope below (no Entra ID
-SSO yet, no audit trail, no compliance mapping, no SBOM/provenance
-ingestion). See `portal/README.md` for how to run it.
+[`portal/`](portal) is a real, self-hosted v1** — Docker/Compose packaged,
+SQLite-persisted, HTTP Basic Auth for API/machine access, and now real
+per-user dashboard login via OIDC SSO (Entra ID or any other compliant
+IdP) — not a throwaway prototype anymore, though still short of the full
+Scope below (no audit trail, no compliance mapping, no SBOM/provenance
+ingestion). See `portal/README.md` for how to run it and configure SSO.
 
 **Decided:**
 - **Hosting model: self-hosted.** The customer runs `portal/` themselves
@@ -36,7 +37,18 @@ visibility/governance on top, not a gate on core scanning functionality.
   findings.
 - **Entra ID SSO** — organization login for the dashboard itself (not
   related to the CLI's use of `DefaultAzureCredential` for drift
-  detection, which is a separate, already-shipped OSS feature).
+  detection, which is a separate, already-shipped OSS feature). **Built**
+  — see `portal/sso.go`: a generic OIDC client (discovery + authorization
+  code flow + ID token verification via `coreos/go-oidc`), so it works
+  with Entra ID or any other compliant IdP, configured via
+  `OIDC_ISSUER_URL`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET`/`OIDC_REDIRECT_URL`.
+  Sessions persist in the same SQLite file as scans. Verified against a
+  real mock IdP (signed/verified JWTs, full authorization-code round
+  trip) since no real Entra ID tenant was available to test against —
+  the OIDC spec compliance is what makes that substitution valid; pointing
+  `OIDC_ISSUER_URL` at `https://login.microsoftonline.com/<tenant-id>/v2.0`
+  with a real Entra app registration's client ID/secret is the only
+  remaining step, and hasn't itself been exercised.
 - **Org-wide policy management** — push a shared custom Rego policy set
   (see the OSS `--policy-dir` mechanism) to every team's CLI invocations
   centrally, instead of each repo vendoring its own.
@@ -64,9 +76,9 @@ already run the CLI and act on its output; `--upload` is one more consumer
 of the same JSON shape, not a new code path through the scanner.
 
 **Still not real:** SBOM/provenance ingestion (only findings are posted
-today), and everything past ingestion — audit trail, compliance mapping,
-Entra ID SSO for per-user dashboard login (Basic Auth is one shared
-credential, not accounts).
+today), and everything past ingestion — audit trail, compliance mapping.
+`/api/scans` itself stays Basic-Auth-gated even with SSO configured
+(that's still the CLI/CI-pipeline path, not a human at a browser).
 
 ## Sketch data model
 
@@ -97,19 +109,19 @@ CompliancePack (a named rollup of RuleIDs -> a framework's control IDs, e.g. "SO
 ## Resolved
 
 1. ~~**Hosting model**~~ — self-hosted. See portal/Dockerfile + docker-compose.yml.
-2. ~~**Licensing mechanics**~~ — network-gated (shared Basic Auth credential, no license-key logic).
+2. ~~**Licensing mechanics**~~ — network-gated (shared Basic Auth credential for API/machine access, no license-key logic).
 3. **Tech stack** — Go + `database/sql` + `modernc.org/sqlite` (pure-Go, no CGO, so the Docker image stays a single static binary) + `html/template` for the dashboard. Chosen for consistency with the OSS CLI's own stack and because a self-hosted single-binary/single-container deployment doesn't need a separate frontend framework or a heavier database to start.
+4. ~~**Entra ID SSO vs. staying Basic-Auth-only**~~ — built, as real per-user OIDC login (`portal/sso.go`), additive to (not a replacement for) the Basic Auth gate on `/api/scans`. Entra app registration ownership (multi-tenant vs. customer-registered) doesn't need a PolicyForge-side decision at all: since hosting is self-hosted, each customer registers their own app in their own tenant and points their own portal instance at it — there's no shared registration to own.
 
 ## Open questions (block the next real increment)
 
-1. **Entra ID SSO vs. staying Basic-Auth-only** — is per-user login (with real audit attribution — "who ran this scan") worth the OIDC integration + Entra app registration ownership question (multi-tenant app customers consent to, vs. each customer registering their own), or does the shared-credential model cover enough real usage first? This blocks the audit trail item in Scope, since a meaningful audit log needs to know *who*, not just *that*.
-2. **Retention/data residency** — how long are ingested findings kept, and does data residency (e.g. EU-only) need to be a per-org setting? Not urgent while this is a single self-hosted SQLite file the customer already controls, but worth deciding before growing past that.
+1. **Audit trail** — now that sessions carry a real identity (email/name from the ID token), an audit log (scan ingested, who logged in, when) is unblocked — it wasn't buildable against the old Basic-Auth-only model, which only knew *that* someone acted, not *who*. Worth scoping as the next increment.
+2. **Retention/data residency** — how long are ingested findings (and now sessions) kept, and does data residency (e.g. EU-only) need to be a per-org setting? Not urgent while this is a single self-hosted SQLite file the customer already controls, but worth deciding before growing past that.
 3. **SBOM/provenance ingestion** — extend `/api/scans` to accept the SBOM and provenance predicate too (not just findings), and the dashboard to show attestation status per scan.
-4. **Multi-tenancy within one deployment** — today `org`/`project` are just free-text tags on a scan row, not real isolation (any Basic Auth-holder sees every org's data). Worth a real access-control model once more than one org shares a single self-hosted instance.
+4. **Multi-tenancy within one deployment** — today `org`/`project` are just free-text tags on a scan row, not real isolation (any logged-in user or Basic-Auth-holder sees every org's data). Worth a real access-control model (e.g. mapping OIDC group/role claims to org access) once more than one org shares a single self-hosted instance.
 
 ## Next step
 
-Pick one of the above — Entra ID SSO is the largest lift and the one most
-worth scoping carefully (OIDC flow, session storage, migrating away from
-the shared Basic Auth credential without breaking existing `--upload`
-scripts) before starting.
+Audit trail is the natural next increment — it's the one Entra ID SSO
+specifically unblocked (real user identity per session), and it's what
+the shared-credential model structurally couldn't support.

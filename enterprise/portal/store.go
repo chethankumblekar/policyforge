@@ -72,7 +72,78 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("creating schema: %w", err)
 	}
 
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS sessions (
+			id         TEXT PRIMARY KEY,
+			email      TEXT NOT NULL,
+			name       TEXT NOT NULL,
+			expires_at TEXT NOT NULL
+		)
+	`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("creating schema: %w", err)
+	}
+
 	return &Store{db: db}, nil
+}
+
+// Session is one logged-in dashboard user's SSO session (see sso.go).
+// Sessions are stored in the same SQLite file as scans, so a login
+// survives a portal restart the same way scan history does.
+type Session struct {
+	ID        string
+	Email     string
+	Name      string
+	ExpiresAt time.Time
+}
+
+// CreateSession stores a new session.
+func (s *Store) CreateSession(id, email, name string, expiresAt time.Time) error {
+	_, err := s.db.Exec(
+		`INSERT INTO sessions (id, email, name, expires_at) VALUES (?, ?, ?, ?)`,
+		id, email, name, expiresAt.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("inserting session: %w", err)
+	}
+	return nil
+}
+
+// GetSession looks up a session by ID, treating an expired session the
+// same as a missing one (ok=false) rather than erroring — callers just
+// need to know whether to treat the caller as logged in.
+func (s *Store) GetSession(id string) (Session, bool, error) {
+	row := s.db.QueryRow(`SELECT id, email, name, expires_at FROM sessions WHERE id = ?`, id)
+
+	var sess Session
+	var expiresAt string
+	err := row.Scan(&sess.ID, &sess.Email, &sess.Name, &expiresAt)
+	if err == sql.ErrNoRows {
+		return Session{}, false, nil
+	}
+	if err != nil {
+		return Session{}, false, fmt.Errorf("querying session: %w", err)
+	}
+
+	t, err := time.Parse(time.RFC3339Nano, expiresAt)
+	if err != nil {
+		return Session{}, false, fmt.Errorf("parsing session expires_at: %w", err)
+	}
+	sess.ExpiresAt = t
+
+	if time.Now().After(sess.ExpiresAt) {
+		return Session{}, false, nil
+	}
+	return sess, true, nil
+}
+
+// DeleteSession removes a session (logout). Deleting a session that
+// doesn't exist is not an error.
+func (s *Store) DeleteSession(id string) error {
+	if _, err := s.db.Exec(`DELETE FROM sessions WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("deleting session: %w", err)
+	}
+	return nil
 }
 
 // Close closes the underlying database connection.

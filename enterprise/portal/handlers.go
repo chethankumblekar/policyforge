@@ -20,16 +20,31 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 // parsed file into one shared namespace — a `{{define "content"}}` block
 // per page would collide, with whichever file parses last silently
 // winning for every page.
-func render(w http.ResponseWriter, title, contentTemplate string, data interface{}) error {
+//
+// r is used only to show "logged in as ..." in the page chrome when SSO
+// is configured (see sso.go) — r may be nil for callers that have no
+// request in scope, in which case the chrome just omits that line.
+func render(w http.ResponseWriter, r *http.Request, title, contentTemplate string, data interface{}) error {
 	var body bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&body, contentTemplate, data); err != nil {
 		return err
 	}
 
+	var user string
+	if r != nil {
+		if sess, ok := sessionFromContext(r.Context()); ok {
+			user = sess.Name
+			if user == "" {
+				user = sess.Email
+			}
+		}
+	}
+
 	return tmpl.ExecuteTemplate(w, "base", struct {
 		Title string
 		Body  template.HTML
-	}{Title: title, Body: template.HTML(body.String())})
+		User  string
+	}{Title: title, Body: template.HTML(body.String()), User: user})
 }
 
 // ingestRequest is the JSON body /api/scans accepts: the same Finding
@@ -97,7 +112,7 @@ func handleIndex(store *Store) http.HandlerFunc {
 			Scans: scans,
 		}
 
-		if err := render(w, "Scan runs", "index-content", data); err != nil {
+		if err := render(w, r, "Scan runs", "index-content", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
@@ -130,7 +145,7 @@ func handleScanDetail(store *Store) http.HandlerFunc {
 			Counts: run.SeverityCounts(),
 		}
 
-		if err := render(w, "Scan #"+idStr, "scan-content", data); err != nil {
+		if err := render(w, r, "Scan #"+idStr, "scan-content", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}

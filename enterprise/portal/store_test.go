@@ -3,6 +3,7 @@ package main
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func openTestStore(t *testing.T) *Store {
@@ -137,6 +138,78 @@ func TestStore_AddNilFindingsRoundTripsAsEmpty(t *testing.T) {
 func TestNewStore_InvalidPathErrors(t *testing.T) {
 	if _, err := NewStore(filepath.Join(t.TempDir(), "does-not-exist", "portal.db")); err == nil {
 		t.Fatal("expected an error for a path whose parent directory doesn't exist, got nil")
+	}
+}
+
+func TestStore_SessionRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	expiresAt := time.Now().Add(time.Hour)
+
+	if err := s.CreateSession("sess-1", "user@example.com", "Test User", expiresAt); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	got, ok, err := s.GetSession("sess-1")
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected to find the created session")
+	}
+	if got.Email != "user@example.com" || got.Name != "Test User" {
+		t.Errorf("expected email/name to round-trip, got %+v", got)
+	}
+}
+
+func TestStore_GetSessionMissingReturnsFalse(t *testing.T) {
+	s := openTestStore(t)
+	_, ok, err := s.GetSession("does-not-exist")
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if ok {
+		t.Error("expected ok=false for a nonexistent session")
+	}
+}
+
+func TestStore_GetSessionExpiredReturnsFalse(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.CreateSession("sess-expired", "user@example.com", "Test User", time.Now().Add(-time.Hour)); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	_, ok, err := s.GetSession("sess-expired")
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if ok {
+		t.Error("expected an already-expired session to report ok=false")
+	}
+}
+
+func TestStore_DeleteSession(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.CreateSession("sess-1", "user@example.com", "Test User", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := s.DeleteSession("sess-1"); err != nil {
+		t.Fatalf("DeleteSession returned error: %v", err)
+	}
+
+	_, ok, err := s.GetSession("sess-1")
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if ok {
+		t.Error("expected the session to be gone after DeleteSession")
+	}
+}
+
+func TestStore_DeleteSessionMissingIsNotAnError(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.DeleteSession("never-existed"); err != nil {
+		t.Errorf("expected deleting a nonexistent session to be a no-op, got error: %v", err)
 	}
 }
 
