@@ -28,6 +28,19 @@ func mustAdd(t *testing.T, store *Store, org, project string, findings []Finding
 	return run
 }
 
+// newAPIMux wires the same route layout main.go does (minus SSO, which
+// sso_test.go covers separately), for tests that want the real mux
+// dispatch (method-based routing, path values) rather than calling
+// handlers directly.
+func newAPIMux(store *Store, authUser, authPass string) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/scans", basicAuth(authUser, authPass, http.HandlerFunc(handleIngest(store))))
+	mux.Handle("GET /api/scans", basicAuth(authUser, authPass, http.HandlerFunc(handleScansList(store))))
+	mux.Handle("GET /api/scans/{id}", basicAuth(authUser, authPass, http.HandlerFunc(handleScanDetailAPI(store))))
+	mux.Handle("GET /api/session", basicAuth(authUser, authPass, http.HandlerFunc(handleSession())))
+	return mux
+}
+
 func TestHandleIngest_ValidRequestStoresAndReturnsID(t *testing.T) {
 	store := newTestStore(t)
 	body := `{"org":"acme","project":"infra-repo","findings":[{"RuleID":"PF-AZ-001","Severity":"HIGH"}]}`
@@ -92,124 +105,122 @@ func TestHandleIngest_WrongMethodRejected(t *testing.T) {
 	}
 }
 
-// TestHandleIndex_RendersIndexContentNotScanContent is a regression test
-// for a real bug: html/template.ParseFS merges every file into one
-// namespace, so if index.html and scan.html both defined a block named
-// "content", whichever file parsed last silently won for every page —
-// the scan list page would render the scan-detail template instead. The
-// fix names each page's block uniquely (index-content/scan-content) and
-// renders explicitly by name (see render() in handlers.go).
-func TestHandleIndex_RendersIndexContentNotScanContent(t *testing.T) {
+func TestHandleScansList_ReturnsSummaries(t *testing.T) {
 	store := newTestStore(t)
-	mustAdd(t, store, "acme", "infra-repo", []Finding{{RuleID: "PF-AZ-001", Severity: "HIGH", Title: "public access"}})
+	mustAdd(t, store, "acme", "infra-repo", []Finding{
+		{RuleID: "PF-AZ-001", Severity: "HIGH"},
+		{RuleID: "PF-AZ-010", Severity: "CRITICAL"},
+	})
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/scans", nil)
 	rec := httptest.NewRecorder()
-	handleIndex(store)(rec, req)
+	handleScansList(store)(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "Scan runs") {
-		t.Errorf("expected the index page heading \"Scan runs\", got:\n%s", body)
+
+	var scans []scanSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &scans); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
 	}
-	if !strings.Contains(body, "acme / infra-repo") {
-		t.Errorf("expected the scan list row, got:\n%s", body)
+	if len(scans) != 1 {
+		t.Fatalf("expected 1 scan, got %d", len(scans))
 	}
-	if strings.Contains(body, "All scans") {
-		t.Errorf("index page rendered scan-detail content (the back-link \"All scans\") instead of its own — template block collision regressed:\n%s", body)
+	if scans[0].Org != "acme" || scans[0].Project != "infra-repo" {
+		t.Errorf("expected org=acme project=infra-repo, got %+v", scans[0])
+	}
+	if scans[0].Total != 2 {
+		t.Errorf("expected total=2, got %d", scans[0].Total)
+	}
+	if scans[0].SeverityCounts["CRITICAL"] != 1 || scans[0].SeverityCounts["HIGH"] != 1 {
+		t.Errorf("expected severity counts CRITICAL=1 HIGH=1, got %+v", scans[0].SeverityCounts)
 	}
 }
 
-func TestHandleIndex_UnknownPathIs404(t *testing.T) {
+func TestHandleScansList_EmptyReturnsEmptyArrayNotNull(t *testing.T) {
 	store := newTestStore(t)
-	req := httptest.NewRequest(http.MethodGet, "/nope", nil)
-	rec := httptest.NewRecorder()
-	handleIndex(store)(rec, req)
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", rec.Code)
+	req := httptest.NewRequest(http.MethodGet, "/api/scans", nil)
+	rec := httptest.NewRecorder()
+	handleScansList(store)(rec, req)
+
+	if strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Errorf("expected an empty JSON array \"[]\" (so frontend code can always .map() it), got %q", rec.Body.String())
 	}
 }
 
-func TestHandleIndex_EmptyStateMessage(t *testing.T) {
-	store := newTestStore(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	handleIndex(store)(rec, req)
-
-	if !strings.Contains(rec.Body.String(), "No scans ingested yet") {
-		t.Errorf("expected the empty-state message, got:\n%s", rec.Body.String())
-	}
-}
-
-func TestHandleScanDetail_RendersFindingsAndCounts(t *testing.T) {
+func TestHandleScanDetailAPI_ReturnsFindings(t *testing.T) {
 	store := newTestStore(t)
 	mustAdd(t, store, "acme", "infra-repo", []Finding{
 		{RuleID: "PF-AZ-001", Severity: "HIGH", Title: "public access", Resource: "example", File: "main.tf", Line: 3},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/scans/1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/scans/1", nil)
+	req.SetPathValue("id", "1")
 	rec := httptest.NewRecorder()
-	handleScanDetail(store)(rec, req)
+	handleScanDetailAPI(store)(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
-	for _, want := range []string{"PF-AZ-001", "public access", "main.tf:3", "All scans", "acme / infra-repo"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("expected scan detail page to contain %q, got:\n%s", want, body)
-		}
+
+	var detail scanDetail
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if len(detail.Findings) != 1 || detail.Findings[0].RuleID != "PF-AZ-001" {
+		t.Errorf("expected 1 finding PF-AZ-001, got %+v", detail.Findings)
 	}
 }
 
-func TestHandleScanDetail_UnknownIDIs404(t *testing.T) {
+func TestHandleScanDetailAPI_UnknownIDIs404(t *testing.T) {
 	store := newTestStore(t)
-	req := httptest.NewRequest(http.MethodGet, "/scans/999", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/scans/999", nil)
+	req.SetPathValue("id", "999")
 	rec := httptest.NewRecorder()
-	handleScanDetail(store)(rec, req)
+	handleScanDetailAPI(store)(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }
 
-func TestHandleScanDetail_NonNumericIDIs404(t *testing.T) {
+func TestHandleScanDetailAPI_NonNumericIDIs404(t *testing.T) {
 	store := newTestStore(t)
-	req := httptest.NewRequest(http.MethodGet, "/scans/abc", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/scans/abc", nil)
+	req.SetPathValue("id", "abc")
 	rec := httptest.NewRecorder()
-	handleScanDetail(store)(rec, req)
+	handleScanDetailAPI(store)(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }
 
-func TestHandleScanDetail_CleanScanShowsNoViolationsMessage(t *testing.T) {
-	store := newTestStore(t)
-	mustAdd(t, store, "acme", "infra-repo", nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/scans/1", nil)
+func TestHandleSession_ReportsAuthenticated(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/session", nil)
 	rec := httptest.NewRecorder()
-	handleScanDetail(store)(rec, req)
+	handleSession()(rec, req)
 
-	if !strings.Contains(rec.Body.String(), "No policy violations") {
-		t.Errorf("expected the clean-scan message, got:\n%s", rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp sessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if !resp.Authenticated {
+		t.Error("expected authenticated=true (reaching this handler already implies the caller passed the auth gate)")
 	}
 }
 
-// TestFullServer_EndToEnd wires the real mux (as main() does) and drives
-// it with an actual httptest.Server, exercising ingest -> list -> detail
-// as a genuine HTTP round trip rather than calling handlers directly.
+// TestFullServer_EndToEnd wires the real mux (as main() does, minus SSO)
+// and drives it with an actual httptest.Server, exercising
+// ingest -> list -> detail as a genuine HTTP round trip.
 func TestFullServer_EndToEnd(t *testing.T) {
 	store := newTestStore(t)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", handleIndex(store))
-	mux.HandleFunc("/scans/", handleScanDetail(store))
-	mux.HandleFunc("/api/scans", handleIngest(store))
-
+	mux := newAPIMux(store, "", "")
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -231,18 +242,18 @@ func TestFullServer_EndToEnd(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&ingested)
 	resp.Body.Close()
 
-	listResp, err := http.Get(srv.URL + "/")
+	listResp, err := http.Get(srv.URL + "/api/scans")
 	if err != nil {
-		t.Fatalf("GET / failed: %v", err)
+		t.Fatalf("GET /api/scans failed: %v", err)
 	}
 	defer listResp.Body.Close()
 	if listResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", listResp.StatusCode)
 	}
 
-	detailResp, err := http.Get(srv.URL + ingested.URL)
+	detailResp, err := http.Get(srv.URL + "/api/scans/1")
 	if err != nil {
-		t.Fatalf("GET %s failed: %v", ingested.URL, err)
+		t.Fatalf("GET /api/scans/1 failed: %v", err)
 	}
 	defer detailResp.Body.Close()
 	if detailResp.StatusCode != http.StatusOK {
@@ -250,43 +261,38 @@ func TestFullServer_EndToEnd(t *testing.T) {
 	}
 }
 
-// TestFullServer_BasicAuth verifies the auth middleware actually protects
-// the real mux end to end: no credentials → 401, wrong credentials → 401,
-// correct credentials → 200.
 func TestFullServer_BasicAuth(t *testing.T) {
 	store := newTestStore(t)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", handleIndex(store))
-	handler := basicAuth("admin", "secret", mux)
+	mux := newAPIMux(store, "admin", "secret")
 
-	srv := httptest.NewServer(handler)
+	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	noAuthResp, err := http.Get(srv.URL + "/")
+	noAuthResp, err := http.Get(srv.URL + "/api/scans")
 	if err != nil {
-		t.Fatalf("GET / failed: %v", err)
+		t.Fatalf("GET /api/scans failed: %v", err)
 	}
 	noAuthResp.Body.Close()
 	if noAuthResp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expected 401 with no credentials, got %d", noAuthResp.StatusCode)
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/scans", nil)
 	req.SetBasicAuth("admin", "wrong-password")
 	wrongResp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("GET / failed: %v", err)
+		t.Fatalf("GET /api/scans failed: %v", err)
 	}
 	wrongResp.Body.Close()
 	if wrongResp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expected 401 with wrong credentials, got %d", wrongResp.StatusCode)
 	}
 
-	req2, _ := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	req2, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/scans", nil)
 	req2.SetBasicAuth("admin", "secret")
 	okResp, err := http.DefaultClient.Do(req2)
 	if err != nil {
-		t.Fatalf("GET / failed: %v", err)
+		t.Fatalf("GET /api/scans failed: %v", err)
 	}
 	okResp.Body.Close()
 	if okResp.StatusCode != http.StatusOK {
@@ -296,15 +302,14 @@ func TestFullServer_BasicAuth(t *testing.T) {
 
 func TestBasicAuth_DisabledWhenCredentialsEmpty(t *testing.T) {
 	store := newTestStore(t)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", handleIndex(store))
+	mux := newAPIMux(store, "", "")
 
-	srv := httptest.NewServer(basicAuth("", "", mux))
+	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/")
+	resp, err := http.Get(srv.URL + "/api/scans")
 	if err != nil {
-		t.Fatalf("GET / failed: %v", err)
+		t.Fatalf("GET /api/scans failed: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

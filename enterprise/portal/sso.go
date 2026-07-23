@@ -170,6 +170,18 @@ func (s *SSO) handleLogout() http.HandlerFunc {
 // passthrough, so callers can always wrap with it unconditionally; when
 // SSO isn't configured, dashboard access falls back to whatever
 // basicAuth(...) already wraps it with in main.go.
+// requireSession gates access with a plain 401 (not a redirect) when
+// there's no valid session: every route it wraps is a JSON API endpoint
+// (see main.go — GET /api/scans, /api/scans/{id}, /api/session) called by
+// both the browser's own client-side fetches and the Next.js frontend's
+// proxy.ts, both of which use fetch() — and fetch() auto-follows
+// redirects by default. A 302 here previously meant an unauthenticated
+// fetch would silently chase /login -> the IdP -> back to /auth/callback
+// with no real browser session driving it, landing on a confusing final
+// status that was neither a clean success nor a clean failure. Deciding
+// "redirect the browser to /login" is the frontend's job now (see
+// web/src/proxy.ts) — this only ever needs to answer "is this request
+// authenticated," which a 401 says unambiguously.
 func (s *SSO) requireSession(next http.Handler) http.Handler {
 	if s == nil {
 		return next
@@ -178,7 +190,7 @@ func (s *SSO) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookieName)
 		if err != nil {
-			http.Redirect(w, r, "/login", http.StatusFound)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
@@ -188,7 +200,7 @@ func (s *SSO) requireSession(next http.Handler) http.Handler {
 			return
 		}
 		if !ok {
-			http.Redirect(w, r, "/login", http.StatusFound)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 

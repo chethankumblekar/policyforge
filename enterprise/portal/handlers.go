@@ -1,51 +1,16 @@
+// Package main's HTTP handlers. The dashboard UI itself lives in web/ (a
+// Next.js app) — this file is a pure JSON API: ingestion (POST
+// /api/scans, Basic-Auth-gated, the CLI/CI-pipeline path) and read
+// endpoints (GET /api/scans, GET /api/scans/{id}, GET /api/session,
+// gated the same way the dashboard is — SSO session or Basic Auth, see
+// main.go) that the Next.js frontend calls for data.
 package main
 
 import (
-	"bytes"
 	"encoding/json"
-	"html/template"
 	"net/http"
 	"strconv"
-	"strings"
 )
-
-var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
-	"lower": strings.ToLower,
-}).ParseFS(templateFS, "templates/*.html"))
-
-// render executes contentTemplate into a buffer first, then wraps the
-// result in the shared page chrome ("base"). Content templates are
-// rendered in their own ExecuteTemplate call (rather than base.html
-// including them by a fixed name) because html/template merges every
-// parsed file into one shared namespace — a `{{define "content"}}` block
-// per page would collide, with whichever file parses last silently
-// winning for every page.
-//
-// r is used only to show "logged in as ..." in the page chrome when SSO
-// is configured (see sso.go) — r may be nil for callers that have no
-// request in scope, in which case the chrome just omits that line.
-func render(w http.ResponseWriter, r *http.Request, title, contentTemplate string, data interface{}) error {
-	var body bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&body, contentTemplate, data); err != nil {
-		return err
-	}
-
-	var user string
-	if r != nil {
-		if sess, ok := sessionFromContext(r.Context()); ok {
-			user = sess.Name
-			if user == "" {
-				user = sess.Email
-			}
-		}
-	}
-
-	return tmpl.ExecuteTemplate(w, "base", struct {
-		Title string
-		Body  template.HTML
-		User  string
-	}{Title: title, Body: template.HTML(body.String()), User: user})
-}
 
 // ingestRequest is the JSON body /api/scans accepts: the same Finding
 // shape internal/engine.ToJSON already produces, plus org/project so the
@@ -93,35 +58,52 @@ func handleIngest(store *Store) http.HandlerFunc {
 	}
 }
 
-func handleIndex(store *Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
+// scanSummary is the list-view JSON shape: everything the scan list page
+// needs, without repeating every finding's full detail.
+type scanSummary struct {
+	ID             int            `json:"id"`
+	Org            string         `json:"org"`
+	Project        string         `json:"project"`
+	CreatedAt      string         `json:"createdAt"`
+	SeverityCounts map[string]int `json:"severityCounts"`
+	Total          int            `json:"total"`
+}
 
+func handleScansList(store *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		scans, err := store.All()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		data := struct {
-			Scans []ScanRun
-		}{
-			Scans: scans,
+		summaries := make([]scanSummary, 0, len(scans))
+		for _, s := range scans {
+			summaries = append(summaries, scanSummary{
+				ID:             s.ID,
+				Org:            s.Org,
+				Project:        s.Project,
+				CreatedAt:      s.CreatedAt.Format(rfc3339Milli),
+				SeverityCounts: s.SeverityCounts(),
+				Total:          len(s.Findings),
+			})
 		}
 
-		if err := render(w, r, "Scan runs", "index-content", data); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(summaries)
 	}
 }
 
-func handleScanDetail(store *Store) http.HandlerFunc {
+// scanDetail is the detail-view JSON shape: the summary fields plus every
+// finding.
+type scanDetail struct {
+	scanSummary
+	Findings []Finding `json:"findings"`
+}
+
+func handleScanDetailAPI(store *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		idStr := strings.TrimPrefix(r.URL.Path, "/scans/")
-		id, err := strconv.Atoi(idStr)
+		id, err := strconv.Atoi(r.PathValue("id"))
 		if err != nil {
 			http.NotFound(w, r)
 			return
@@ -137,16 +119,46 @@ func handleScanDetail(store *Store) http.HandlerFunc {
 			return
 		}
 
-		data := struct {
-			Scan   ScanRun
-			Counts map[string]int
-		}{
-			Scan:   run,
-			Counts: run.SeverityCounts(),
-		}
-
-		if err := render(w, r, "Scan #"+idStr, "scan-content", data); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(scanDetail{
+			scanSummary: scanSummary{
+				ID:             run.ID,
+				Org:            run.Org,
+				Project:        run.Project,
+				CreatedAt:      run.CreatedAt.Format(rfc3339Milli),
+				SeverityCounts: run.SeverityCounts(),
+				Total:          len(run.Findings),
+			},
+			Findings: run.Findings,
+		})
 	}
 }
+
+// sessionResponse describes who's logged in, for Next.js's middleware to
+// use as its auth-gate check (see web/middleware.ts) and to show "logged
+// in as ..." in the dashboard chrome. This endpoint is only reachable at
+// all if the caller already passed whichever auth gate is active (SSO
+// session or Basic Auth — see main.go's route wiring), so its own body
+// only needs to carry the SSO identity when there is one; a Basic-Auth
+// caller with no SSO configured is still "authenticated" by virtue of
+// having reached the handler; Basic Auth doesn't carry a display name, so
+// User is empty in that case.
+type sessionResponse struct {
+	Authenticated bool   `json:"authenticated"`
+	Email         string `json:"email,omitempty"`
+	Name          string `json:"name,omitempty"`
+}
+
+func handleSession() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		resp := sessionResponse{Authenticated: true}
+		if sess, ok := sessionFromContext(r.Context()); ok {
+			resp.Email = sess.Email
+			resp.Name = sess.Name
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+const rfc3339Milli = "2006-01-02T15:04:05.000Z07:00"

@@ -6,3 +6,6 @@
 
 # Editor/OS cruft
 .DS_Store
+
+# Local Claude Code settings/permissions (machine-specific, not project config)
+.claude/

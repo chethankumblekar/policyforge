@@ -1,0 +1,480 @@
+/*
+  Design language: "temper colors" — the interference-color film that
+  forms on steel as it's heated during tempering (straw, gold, purple,
+  blue), the same physical process the product's name ("Forge") points
+  at. The base palette reads as blued/oxidized steel; severity is the
+  one place saturated color is allowed to do real work, escalating
+  critical -> high -> medium -> low the way a piece of steel visibly
+  gets hotter as you push more heat into it. Nothing else on the page
+  borrows that saturation, so severity color stays legible as signal.
+*/
+
+:root {
+  color-scheme: dark;
+
+  --bg: #0c0d0e;
+  --surface: #17191b;
+  --surface-raised: #1d2023;
+  --border: rgba(237, 238, 234, 0.09);
+  --border-strong: rgba(237, 238, 234, 0.16);
+
+  --ink: #edeeea;
+  --ink-secondary: #a8a39a;
+  --ink-muted: #6b6660;
+
+  --accent: #4a9cc9;
+  --accent-dim: rgba(74, 156, 201, 0.14);
+
+  --critical: #e8462b;
+  --high: #e08a2e;
+  --medium: #d4a72c;
+  --low: #2fa089;
+
+  --critical-glow: rgba(232, 70, 43, 0.35);
+
+  --radius: 6px;
+  --font-sans: var(--font-sans-family), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-mono-family), ui-monospace, "SF Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+code,
+.mono {
+  font-family: var(--font-mono);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- Layout shell ---------- */
+
+.topbar {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.brand-mark {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+}
+
+.brand-sub {
+  color: var(--ink-muted);
+  font-size: 12px;
+  letter-spacing: 0.03em;
+}
+
+.topnav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 13px;
+}
+
+.topnav a {
+  color: var(--ink-secondary);
+  transition: color 0.15s ease;
+}
+
+.topnav a:hover {
+  color: var(--ink);
+}
+
+.topnav-user {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.shell {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 40px 28px 64px;
+  animation: rise 0.35s ease both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.footer {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 28px 40px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.footer code {
+  color: var(--ink-secondary);
+}
+
+/* ---------- Typography ---------- */
+
+h1 {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+}
+
+.lede {
+  color: var(--ink-secondary);
+  font-size: 13.5px;
+  margin-bottom: 28px;
+}
+
+.lede code {
+  color: var(--ink);
+  background: var(--surface-raised);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12.5px;
+}
+
+.back-link {
+  display: inline-block;
+  color: var(--ink-secondary);
+  font-size: 13px;
+  margin-bottom: 18px;
+  transition: color 0.15s ease;
+}
+
+.back-link:hover {
+  color: var(--accent);
+}
+
+.muted {
+  color: var(--ink-muted);
+}
+
+.error {
+  color: var(--critical);
+  font-size: 13.5px;
+}
+
+.empty {
+  color: var(--ink-muted);
+  font-size: 13.5px;
+  padding: 32px 0;
+  line-height: 1.8;
+}
+
+.empty code {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--ink-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 12.5px;
+}
+
+/* ---------- Signature element: severity spectrum bar ---------- */
+
+.severity-bar {
+  display: flex;
+  height: 6px;
+  width: 100%;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-raised);
+}
+
+.severity-bar--lg {
+  height: 14px;
+}
+
+.severity-bar--empty {
+  background: var(--surface-raised);
+}
+
+.severity-bar__segment {
+  height: 100%;
+  min-width: 2px;
+}
+
+.severity-bar__segment--critical {
+  background: var(--critical);
+  box-shadow: 0 0 10px 1px var(--critical-glow);
+}
+
+.severity-bar__segment--high {
+  background: var(--high);
+}
+
+.severity-bar__segment--medium {
+  background: var(--medium);
+}
+
+.severity-bar__segment--low {
+  background: var(--low);
+}
+
+/* ---------- Scan list ("log") ---------- */
+
+.scan-log {
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.scan-log__row + .scan-log__row {
+  border-top: 1px solid var(--border);
+}
+
+.scan-log__link {
+  display: grid;
+  grid-template-columns: 48px 1fr 140px 90px;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 20px;
+  transition: background 0.15s ease;
+}
+
+.scan-log__link:hover {
+  background: var(--surface-raised);
+}
+
+.scan-log__id {
+  font-family: var(--font-mono);
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+.scan-log__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.scan-log__project {
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan-log__time {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-muted);
+}
+
+.scan-log__total {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--ink-secondary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .scan-log__link {
+    grid-template-columns: 36px 1fr;
+    grid-template-areas:
+      "id meta"
+      "bar bar"
+      ". total";
+  }
+  .scan-log__id {
+    grid-area: id;
+  }
+  .scan-log__meta {
+    grid-area: meta;
+  }
+  .severity-bar {
+    grid-area: bar;
+    margin-top: 10px;
+  }
+  .scan-log__total {
+    grid-area: total;
+    text-align: left;
+    margin-top: 4px;
+  }
+}
+
+/* ---------- Scan detail hero ---------- */
+
+.hero-spectrum {
+  margin: 20px 0 32px;
+  padding: 20px 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.hero-spectrum__counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin-top: 16px;
+  font-size: 13px;
+}
+
+.count strong {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  margin-right: 5px;
+}
+
+.count--critical strong {
+  color: var(--critical);
+}
+.count--high strong {
+  color: var(--high);
+}
+.count--medium strong {
+  color: var(--medium);
+}
+.count--low strong {
+  color: var(--low);
+}
+
+/* ---------- Severity badge ---------- */
+
+.badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.badge--critical {
+  background: var(--critical);
+  color: #fff;
+}
+.badge--high {
+  background: var(--high);
+  color: #1a1005;
+}
+.badge--medium {
+  background: var(--medium);
+  color: #1a1005;
+}
+.badge--low {
+  background: var(--low);
+  color: #fff;
+}
+
+/* ---------- Findings list ---------- */
+
+.findings {
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.findings__row {
+  padding: 14px 18px;
+  transition: background 0.15s ease;
+}
+
+.findings__row + .findings__row {
+  border-top: 1px solid var(--border);
+}
+
+.findings__row:hover {
+  background: var(--surface-raised);
+}
+
+.findings__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.findings__rule {
+  font-size: 12.5px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.findings__resource {
+  font-size: 13px;
+  color: var(--ink-secondary);
+}
+
+.findings__location {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.findings__title {
+  font-size: 13.5px;
+  color: var(--ink);
+  line-height: 1.5;
+}

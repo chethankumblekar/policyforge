@@ -1,26 +1,23 @@
-// Command portal is a self-hosted PolicyForge enterprise dashboard: an
-// ingestion API (POST /api/scans) plus a small dashboard UI, backed by a
-// local SQLite file. See ../DESIGN.md for the full scope and the
-// decisions this v1 makes concrete: self-hosted (you run this yourself —
-// there is no PolicyForge-operated SaaS), and API access is
-// network-gated (whoever has the URL and the shared Basic Auth
-// credential below). The dashboard itself can optionally require real
-// per-user login via OIDC/Entra ID SSO — see sso.go — falling back to the
-// same Basic Auth credential when SSO isn't configured.
+// Command portal is a self-hosted PolicyForge enterprise API: an
+// ingestion endpoint (POST /api/scans) plus read endpoints the Next.js
+// dashboard (see web/) renders from, backed by a local SQLite file. See
+// ../DESIGN.md for the full scope and the decisions this v1 makes
+// concrete: self-hosted (you run this yourself — there is no
+// PolicyForge-operated SaaS), and API access is network-gated (whoever
+// has the URL and the shared Basic Auth credential below). The dashboard
+// itself can optionally require real per-user login via OIDC/Entra ID
+// SSO — see sso.go — falling back to the same Basic Auth credential when
+// SSO isn't configured.
 package main
 
 import (
 	"context"
-	"embed"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 )
-
-//go:embed templates/*.html
-var templateFS embed.FS
 
 func main() {
 	addr := flag.String("addr", ":8090", "address to listen on")
@@ -50,27 +47,34 @@ func main() {
 		}
 	}
 
-	dashboard := http.NewServeMux()
-	dashboard.HandleFunc("/", handleIndex(store))
-	dashboard.HandleFunc("/scans/", handleScanDetail(store))
+	// dashboardAuth gates the read API the Next.js frontend calls: an SSO
+	// session if configured, otherwise the same shared Basic Auth
+	// credential /api/scans (ingestion) always uses.
+	dashboardAuth := func(h http.Handler) http.Handler {
+		if sso != nil {
+			return sso.requireSession(h)
+		}
+		return basicAuth(*authUser, *authPass, h)
+	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/api/scans", basicAuth(*authUser, *authPass, http.HandlerFunc(handleIngest(store))))
+	mux.Handle("POST /api/scans", basicAuth(*authUser, *authPass, http.HandlerFunc(handleIngest(store))))
+	mux.Handle("GET /api/scans", dashboardAuth(http.HandlerFunc(handleScansList(store))))
+	mux.Handle("GET /api/scans/{id}", dashboardAuth(http.HandlerFunc(handleScanDetailAPI(store))))
+	mux.Handle("GET /api/session", dashboardAuth(http.HandlerFunc(handleSession())))
 
 	if sso != nil {
 		mux.HandleFunc("/login", sso.handleLogin())
 		mux.HandleFunc("/auth/callback", sso.handleCallback())
 		mux.HandleFunc("/logout", sso.handleLogout())
-		mux.Handle("/", sso.requireSession(dashboard))
-	} else {
-		mux.Handle("/", basicAuth(*authUser, *authPass, dashboard))
 	}
 
-	fmt.Printf("PolicyForge portal listening on http://localhost%s (data: %s)\n", *addr, *dbPath)
+	fmt.Printf("PolicyForge portal API listening on http://localhost%s (data: %s)\n", *addr, *dbPath)
+	fmt.Println("Run the Next.js dashboard in web/ to browse it (see web/README.md).")
 	if *authUser == "" || *authPass == "" {
 		warning := "WARNING: no --auth-user/--auth-pass set — /api/scans is open to anyone who can reach this address"
 		if sso == nil {
-			warning += ", and so is the dashboard (SSO isn't configured either)"
+			warning += ", and so is every read endpoint the dashboard calls (SSO isn't configured either)"
 		}
 		fmt.Println(warning)
 	}

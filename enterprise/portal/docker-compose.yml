@@ -21,5 +21,24 @@ services:
       OIDC_REDIRECT_URL: "${OIDC_REDIRECT_URL:-}"
     restart: unless-stopped
 
+  web:
+    build: ./web
+    ports:
+      - "3000:3000"
+    environment:
+      # Reaches the portal service over Compose's internal network — the
+      # browser never talks to this address directly, only to web's own
+      # port (see web/next.config.ts's rewrites).
+      BACKEND_INTERNAL_URL: http://portal:8090
+      # Set to "sso" iff OIDC_* above is configured, so web/src/proxy.ts
+      # knows to redirect unauthenticated page loads to /login. Leave
+      # unset (or "basic") for Basic-Auth-only deployments — the browser's
+      # own native credential prompt handles that case without any help
+      # from this app.
+      AUTH_MODE: "${AUTH_MODE:-}"
+    depends_on:
+      - portal
+    restart: unless-stopped
+
 volumes:
   portal-data:

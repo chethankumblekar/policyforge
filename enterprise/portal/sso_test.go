@@ -25,15 +25,13 @@ func newTestSSOServer(t *testing.T) (*httptest.Server, *mockOIDCServer, *Store) 
 		t.Fatalf("NewSSO returned error: %v", err)
 	}
 
-	dashboard := http.NewServeMux()
-	dashboard.HandleFunc("/", handleIndex(store))
-	dashboard.HandleFunc("/scans/", handleScanDetail(store))
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("/login", sso.handleLogin())
 	mux.HandleFunc("/auth/callback", sso.handleCallback())
 	mux.HandleFunc("/logout", sso.handleLogout())
-	mux.Handle("/", sso.requireSession(dashboard))
+	mux.Handle("GET /api/scans", sso.requireSession(http.HandlerFunc(handleScansList(store))))
+	mux.Handle("GET /api/scans/{id}", sso.requireSession(http.HandlerFunc(handleScanDetailAPI(store))))
+	mux.Handle("GET /api/session", sso.requireSession(http.HandlerFunc(handleSession())))
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -55,22 +53,23 @@ func noRedirectClient(t *testing.T) *http.Client {
 }
 
 // TestSSO_FullLoginFlow drives the entire OIDC dance against a real mock
-// IdP: unauthenticated dashboard access redirects to /login, /login
-// redirects to the IdP with a state cookie, the callback (simulating the
-// IdP's redirect back with a real signed ID token) creates a session, and
-// the dashboard is then reachable.
+// IdP: unauthenticated API access is a plain 401 (deciding to redirect a
+// browser to /login is the Next.js frontend's job — see web/src/proxy.ts
+// — not this JSON API's), /login redirects to the IdP with a state
+// cookie, the callback (simulating the IdP's redirect back with a real
+// signed ID token) creates a session, and the API is then reachable.
 func TestSSO_FullLoginFlow(t *testing.T) {
 	srv, mock, _ := newTestSSOServer(t)
 	client := noRedirectClient(t)
 
-	// 1. Unauthenticated dashboard access redirects to /login.
-	resp, err := client.Get(srv.URL + "/")
+	// 1. Unauthenticated API access is a plain 401.
+	resp, err := client.Get(srv.URL + "/api/scans")
 	if err != nil {
-		t.Fatalf("GET / failed: %v", err)
+		t.Fatalf("GET /api/scans failed: %v", err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/login" {
-		t.Fatalf("expected 302 to /login, got %d Location=%q", resp.StatusCode, resp.Header.Get("Location"))
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", resp.StatusCode)
 	}
 
 	// 2. /login redirects to the mock IdP's authorization endpoint and
@@ -109,10 +108,10 @@ func TestSSO_FullLoginFlow(t *testing.T) {
 		t.Fatalf("expected 302 to / after a valid callback, got %d Location=%q", callbackResp.StatusCode, callbackResp.Header.Get("Location"))
 	}
 
-	// 4. The dashboard is now reachable, and shows the logged-in user.
-	dashResp, err := client.Get(srv.URL + "/")
+	// 4. The dashboard API is now reachable.
+	dashResp, err := client.Get(srv.URL + "/api/scans")
 	if err != nil {
-		t.Fatalf("GET / failed: %v", err)
+		t.Fatalf("GET /api/scans failed: %v", err)
 	}
 	defer dashResp.Body.Close()
 	if dashResp.StatusCode != http.StatusOK {
@@ -129,13 +128,13 @@ func TestSSO_FullLoginFlow(t *testing.T) {
 		t.Fatalf("expected 302 to /login after logout, got %d", logoutResp.StatusCode)
 	}
 
-	afterLogoutResp, err := client.Get(srv.URL + "/")
+	afterLogoutResp, err := client.Get(srv.URL + "/api/scans")
 	if err != nil {
-		t.Fatalf("GET / failed: %v", err)
+		t.Fatalf("GET /api/scans failed: %v", err)
 	}
 	afterLogoutResp.Body.Close()
-	if afterLogoutResp.StatusCode != http.StatusFound || afterLogoutResp.Header.Get("Location") != "/login" {
-		t.Fatalf("expected 302 to /login after logout, got %d", afterLogoutResp.StatusCode)
+	if afterLogoutResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 after logout, got %d", afterLogoutResp.StatusCode)
 	}
 }
 
@@ -273,12 +272,12 @@ func TestSSO_RequireSessionRejectsExpiredSession(t *testing.T) {
 		}
 	}
 
-	resp, err := client.Get(srv.URL + "/")
+	resp, err := client.Get(srv.URL + "/api/scans")
 	if err != nil {
-		t.Fatalf("GET / failed: %v", err)
+		t.Fatalf("GET /api/scans failed: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/login" {
-		t.Errorf("expected an expired session to be treated as logged out (302 to /login), got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected an expired session to be treated as logged out (401), got %d", resp.StatusCode)
 	}
 }

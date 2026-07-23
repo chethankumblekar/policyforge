@@ -2,11 +2,12 @@
 
 **Status: hosting model and licensing mechanics are decided (below);
 [`portal/`](portal) is a real, self-hosted v1** — Docker/Compose packaged,
-SQLite-persisted, HTTP Basic Auth for API/machine access, and now real
-per-user dashboard login via OIDC SSO (Entra ID or any other compliant
-IdP) — not a throwaway prototype anymore, though still short of the full
-Scope below (no audit trail, no compliance mapping, no SBOM/provenance
-ingestion). See `portal/README.md` for how to run it and configure SSO.
+SQLite-persisted, HTTP Basic Auth for API/machine access, real per-user
+dashboard login via OIDC SSO (Entra ID or any other compliant IdP), and a
+proper Next.js dashboard UI (`portal/web`) — not a throwaway prototype
+anymore, though still short of the full Scope below (no audit trail, no
+compliance mapping, no SBOM/provenance ingestion). See `portal/README.md`
+for how to run it and configure SSO.
 
 **Decided:**
 - **Hosting model: self-hosted.** The customer runs `portal/` themselves
@@ -34,7 +35,10 @@ visibility/governance on top, not a gate on core scanning functionality.
 - **Hosted dashboard** — aggregate scan results (findings, SBOM,
   provenance/attestation status) across every repo/pipeline that runs
   `policyforge scan`, with trend views and drill-down to individual
-  findings.
+  findings. **Built** (scan list + drill-down; trend views and
+  SBOM/provenance status are not) — `portal/web`, a Next.js frontend
+  calling the Go API for everything, with a distinctive design system
+  (see `portal/web/README.md`) rather than a generic dashboard template.
 - **Entra ID SSO** — organization login for the dashboard itself (not
   related to the CLI's use of `DefaultAzureCredential` for drift
   detection, which is a separate, already-shipped OSS feature). **Built**
@@ -110,7 +114,7 @@ CompliancePack (a named rollup of RuleIDs -> a framework's control IDs, e.g. "SO
 
 1. ~~**Hosting model**~~ — self-hosted. See portal/Dockerfile + docker-compose.yml.
 2. ~~**Licensing mechanics**~~ — network-gated (shared Basic Auth credential for API/machine access, no license-key logic).
-3. **Tech stack** — Go + `database/sql` + `modernc.org/sqlite` (pure-Go, no CGO, so the Docker image stays a single static binary) + `html/template` for the dashboard. Chosen for consistency with the OSS CLI's own stack and because a self-hosted single-binary/single-container deployment doesn't need a separate frontend framework or a heavier database to start.
+3. **Tech stack** — Go + `database/sql` + `modernc.org/sqlite` (pure-Go, no CGO, so the API's Docker image stays a single static binary) for the API, and Next.js for the dashboard (`portal/web`, a separate Node project/container — the API itself has no frontend templating anymore). The API's Go choice is for consistency with the OSS CLI's own stack; the dashboard moved to Next.js for a real design system instead of `html/template`'s hand-rolled CSS.
 4. ~~**Entra ID SSO vs. staying Basic-Auth-only**~~ — built, as real per-user OIDC login (`portal/sso.go`), additive to (not a replacement for) the Basic Auth gate on `/api/scans`. Entra app registration ownership (multi-tenant vs. customer-registered) doesn't need a PolicyForge-side decision at all: since hosting is self-hosted, each customer registers their own app in their own tenant and points their own portal instance at it — there's no shared registration to own.
 
 ## Open questions (block the next real increment)
