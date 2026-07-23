@@ -59,7 +59,7 @@ func noRedirectClient(t *testing.T) *http.Client {
 // cookie, the callback (simulating the IdP's redirect back with a real
 // signed ID token) creates a session, and the API is then reachable.
 func TestSSO_FullLoginFlow(t *testing.T) {
-	srv, mock, _ := newTestSSOServer(t)
+	srv, mock, store := newTestSSOServer(t)
 	client := noRedirectClient(t)
 
 	// 1. Unauthenticated API access is a plain 401.
@@ -135,6 +135,21 @@ func TestSSO_FullLoginFlow(t *testing.T) {
 	afterLogoutResp.Body.Close()
 	if afterLogoutResp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected 401 after logout, got %d", afterLogoutResp.StatusCode)
+	}
+
+	// 6. Both the login and the logout were recorded in the audit log.
+	events, err := store.AuditEvents()
+	if err != nil {
+		t.Fatalf("AuditEvents returned error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 audit events (login + logout), got %d: %+v", len(events), events)
+	}
+	if events[0].EventType != "logout" || events[0].Actor != "user@example.com" {
+		t.Errorf("expected the most recent event to be logout for user@example.com, got %+v", events[0])
+	}
+	if events[1].EventType != "login" || events[1].Actor != "user@example.com" {
+		t.Errorf("expected the older event to be login for user@example.com, got %+v", events[1])
 	}
 }
 

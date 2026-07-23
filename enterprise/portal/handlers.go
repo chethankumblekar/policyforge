@@ -8,6 +8,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 )
@@ -45,6 +46,22 @@ func handleIngest(store *Store) http.HandlerFunc {
 
 		run, err := store.Add(req.Org, req.Project, req.Findings)
 		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// The Basic Auth username is the closest thing to an actor
+		// identity CLI/CI ingestion has (see auth.go — Basic Auth is the
+		// only auth /api/scans ever uses, regardless of SSO); r.BasicAuth
+		// already passed validation in the basicAuth middleware, so this
+		// just re-reads the same header. Auth disabled (empty
+		// credentials) means there's no actor at all to report.
+		actor, _, ok := r.BasicAuth()
+		if !ok {
+			actor = "anonymous"
+		}
+		detail := fmt.Sprintf("%s/%s — scan #%d, %d finding(s)", req.Org, req.Project, run.ID, len(run.Findings))
+		if err := store.AddAuditEvent("scan_ingested", actor, detail); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -158,6 +175,39 @@ func handleSession() http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// auditEventResponse is the JSON shape for one audit log entry.
+type auditEventResponse struct {
+	ID        int    `json:"id"`
+	EventType string `json:"eventType"`
+	Actor     string `json:"actor"`
+	Detail    string `json:"detail"`
+	CreatedAt string `json:"createdAt"`
+}
+
+func handleAuditList(store *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		events, err := store.AuditEvents()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		out := make([]auditEventResponse, 0, len(events))
+		for _, e := range events {
+			out = append(out, auditEventResponse{
+				ID:        e.ID,
+				EventType: e.EventType,
+				Actor:     e.Actor,
+				Detail:    e.Detail,
+				CreatedAt: e.CreatedAt.Format(rfc3339Milli),
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(out)
 	}
 }
 

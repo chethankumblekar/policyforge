@@ -3,11 +3,12 @@
 **Status: hosting model and licensing mechanics are decided (below);
 [`portal/`](portal) is a real, self-hosted v1** — Docker/Compose packaged,
 SQLite-persisted, HTTP Basic Auth for API/machine access, real per-user
-dashboard login via OIDC SSO (Entra ID or any other compliant IdP), and a
-proper Next.js dashboard UI (`portal/web`) — not a throwaway prototype
-anymore, though still short of the full Scope below (no audit trail, no
-compliance mapping, no SBOM/provenance ingestion). See `portal/README.md`
-for how to run it and configure SSO.
+dashboard login via OIDC SSO (Entra ID or any other compliant IdP), a
+proper Next.js dashboard UI (`portal/web`), and an audit trail of scan
+ingestion + logins/logouts — not a throwaway prototype anymore, though
+still short of the full Scope below (no compliance framework mapping, no
+SBOM/provenance ingestion). See `portal/README.md` for how to run it and
+configure SSO.
 
 **Decided:**
 - **Hosting model: self-hosted.** The customer runs `portal/` themselves
@@ -56,8 +57,15 @@ visibility/governance on top, not a gate on core scanning functionality.
 - **Org-wide policy management** — push a shared custom Rego policy set
   (see the OSS `--policy-dir` mechanism) to every team's CLI invocations
   centrally, instead of each repo vendoring its own.
-- **Audit trail** — an immutable log of scan runs, findings, policy
-  changes, and who/what triggered them, for compliance evidence.
+- **Audit trail** — an immutable log of scan runs and who/what triggered
+  them, for compliance evidence. **Built** — see `portal/store.go`'s
+  `audit_events` table and the `GET /api/audit` endpoint (`portal/web`'s
+  "Audit log" page): every `POST /api/scans` ingestion (actor = the
+  Basic Auth username, or `anonymous` if auth is disabled) and every SSO
+  login/logout (actor = the session's email) is recorded. Policy-change
+  events aren't recorded yet, since there's no server-side policy
+  management to log changes to (see "Org-wide policy management" below,
+  still unbuilt).
 - **Compliance framework mapping** — roll up rule-level findings (already
   tagged with e.g. "CIS Azure Foundations 3.6") into SOC2/PCI control
   coverage reports.
@@ -119,13 +127,13 @@ CompliancePack (a named rollup of RuleIDs -> a framework's control IDs, e.g. "SO
 
 ## Open questions (block the next real increment)
 
-1. **Audit trail** — now that sessions carry a real identity (email/name from the ID token), an audit log (scan ingested, who logged in, when) is unblocked — it wasn't buildable against the old Basic-Auth-only model, which only knew *that* someone acted, not *who*. Worth scoping as the next increment.
-2. **Retention/data residency** — how long are ingested findings (and now sessions) kept, and does data residency (e.g. EU-only) need to be a per-org setting? Not urgent while this is a single self-hosted SQLite file the customer already controls, but worth deciding before growing past that.
-3. **SBOM/provenance ingestion** — extend `/api/scans` to accept the SBOM and provenance predicate too (not just findings), and the dashboard to show attestation status per scan.
-4. **Multi-tenancy within one deployment** — today `org`/`project` are just free-text tags on a scan row, not real isolation (any logged-in user or Basic-Auth-holder sees every org's data). Worth a real access-control model (e.g. mapping OIDC group/role claims to org access) once more than one org shares a single self-hosted instance.
+1. **Retention/data residency** — how long are ingested findings (and now sessions and audit events) kept, and does data residency (e.g. EU-only) need to be a per-org setting? Not urgent while this is a single self-hosted SQLite file the customer already controls, but worth deciding before growing past that.
+2. **SBOM/provenance ingestion** — extend `/api/scans` to accept the SBOM and provenance predicate too (not just findings), and the dashboard to show attestation status per scan.
+3. **Multi-tenancy within one deployment** — today `org`/`project` are just free-text tags on a scan row, not real isolation (any logged-in user or Basic-Auth-holder sees every org's data). Worth a real access-control model (e.g. mapping OIDC group/role claims to org access) once more than one org shares a single self-hosted instance.
 
 ## Next step
 
-Audit trail is the natural next increment — it's the one Entra ID SSO
-specifically unblocked (real user identity per session), and it's what
-the shared-credential model structurally couldn't support.
+SBOM/provenance ingestion is the natural next increment — the CLI
+already produces both (`--sbom`, `--provenance`), so the gap is purely on
+the portal side: accepting them in `/api/scans` and surfacing attestation
+status in the dashboard.

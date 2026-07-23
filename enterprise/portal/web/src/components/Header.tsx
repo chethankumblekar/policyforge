@@ -30,6 +30,7 @@ export function Header() {
       <span className="brand-sub">self-hosted portal</span>
       <nav className="topnav">
         <Link href="/">Scan runs</Link>
+        <Link href="/audit">Audit log</Link>
         {displayName && (
           <>
             <span className="topnav-user">{displayName}</span>

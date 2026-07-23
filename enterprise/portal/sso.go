@@ -141,6 +141,10 @@ func (s *SSO) handleCallback() http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if err := s.store.AddAuditEvent("login", claims.Email, "logged in via SSO"); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookieName,
@@ -158,6 +162,9 @@ func (s *SSO) handleCallback() http.HandlerFunc {
 func (s *SSO) handleLogout() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie(sessionCookieName); err == nil {
+			if sess, ok, _ := s.store.GetSession(c.Value); ok {
+				_ = s.store.AddAuditEvent("logout", sess.Email, "logged out")
+			}
 			_ = s.store.DeleteSession(c.Value)
 		}
 		http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1})

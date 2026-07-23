@@ -38,6 +38,7 @@ func newAPIMux(store *Store, authUser, authPass string) http.Handler {
 	mux.Handle("GET /api/scans", basicAuth(authUser, authPass, http.HandlerFunc(handleScansList(store))))
 	mux.Handle("GET /api/scans/{id}", basicAuth(authUser, authPass, http.HandlerFunc(handleScanDetailAPI(store))))
 	mux.Handle("GET /api/session", basicAuth(authUser, authPass, http.HandlerFunc(handleSession())))
+	mux.Handle("GET /api/audit", basicAuth(authUser, authPass, http.HandlerFunc(handleAuditList(store))))
 	return mux
 }
 
@@ -102,6 +103,87 @@ func TestHandleIngest_WrongMethodRejected(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+}
+
+func TestHandleIngest_RecordsAuditEvent(t *testing.T) {
+	store := newTestStore(t)
+	body := `{"org":"acme","project":"infra-repo","findings":[{"RuleID":"PF-AZ-001","Severity":"HIGH"}]}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/scans", strings.NewReader(body))
+	req.SetBasicAuth("ci-pipeline", "secret")
+	rec := httptest.NewRecorder()
+	handleIngest(store)(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	events, err := store.AuditEvents()
+	if err != nil {
+		t.Fatalf("AuditEvents returned error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(events))
+	}
+	if events[0].EventType != "scan_ingested" || events[0].Actor != "ci-pipeline" {
+		t.Errorf("expected event_type=scan_ingested actor=ci-pipeline, got %+v", events[0])
+	}
+}
+
+func TestHandleIngest_NoCredentialsRecordsAnonymousActor(t *testing.T) {
+	store := newTestStore(t)
+	body := `{"org":"acme","project":"infra-repo","findings":[]}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/scans", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handleIngest(store)(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	events, err := store.AuditEvents()
+	if err != nil {
+		t.Fatalf("AuditEvents returned error: %v", err)
+	}
+	if len(events) != 1 || events[0].Actor != "anonymous" {
+		t.Fatalf("expected 1 audit event with actor=anonymous, got %+v", events)
+	}
+}
+
+func TestHandleAuditList_ReturnsEvents(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.AddAuditEvent("login", "user@example.com", "logged in via SSO"); err != nil {
+		t.Fatalf("AddAuditEvent returned error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/audit", nil)
+	rec := httptest.NewRecorder()
+	handleAuditList(store)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var events []auditEventResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &events); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != "login" || events[0].Actor != "user@example.com" {
+		t.Errorf("expected 1 login event for user@example.com, got %+v", events)
+	}
+}
+
+func TestHandleAuditList_EmptyReturnsEmptyArrayNotNull(t *testing.T) {
+	store := newTestStore(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/audit", nil)
+	rec := httptest.NewRecorder()
+	handleAuditList(store)(rec, req)
+
+	if strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Errorf("expected an empty JSON array \"[]\", got %q", rec.Body.String())
 	}
 }
 

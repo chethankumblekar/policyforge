@@ -84,6 +84,19 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("creating schema: %w", err)
 	}
 
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS audit_events (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			event_type TEXT NOT NULL,
+			actor      TEXT NOT NULL,
+			detail     TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)
+	`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("creating schema: %w", err)
+	}
+
 	return &Store{db: db}, nil
 }
 
@@ -149,6 +162,58 @@ func (s *Store) DeleteSession(id string) error {
 // Close closes the underlying database connection.
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// AuditEvent is one entry in the portal's audit log — a scan ingested, a
+// user logging in or out. See enterprise/DESIGN.md's "Audit trail" scope
+// item: an immutable log of who/what happened, for compliance evidence.
+// There's no update or delete on this table by design.
+type AuditEvent struct {
+	ID        int
+	EventType string
+	Actor     string
+	Detail    string
+	CreatedAt time.Time
+}
+
+// AddAuditEvent records one audit log entry. actor identifies who/what
+// triggered it — a Basic Auth username for CLI/CI ingestion, or an SSO
+// session's email for login/logout — and detail is a short human-readable
+// description (e.g. "acme/infra-repo — scan #3, 21 finding(s)").
+func (s *Store) AddAuditEvent(eventType, actor, detail string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO audit_events (event_type, actor, detail, created_at) VALUES (?, ?, ?, ?)`,
+		eventType, actor, detail, time.Now().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("inserting audit event: %w", err)
+	}
+	return nil
+}
+
+// AuditEvents returns every audit event, most recent first.
+func (s *Store) AuditEvents() ([]AuditEvent, error) {
+	rows, err := s.db.Query(`SELECT id, event_type, actor, detail, created_at FROM audit_events ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("querying audit events: %w", err)
+	}
+	defer rows.Close()
+
+	var out []AuditEvent
+	for rows.Next() {
+		var e AuditEvent
+		var createdAt string
+		if err := rows.Scan(&e.ID, &e.EventType, &e.Actor, &e.Detail, &createdAt); err != nil {
+			return nil, fmt.Errorf("scanning audit event: %w", err)
+		}
+		t, err := time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parsing audit event created_at: %w", err)
+		}
+		e.CreatedAt = t
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // Add stores a new scan run and returns it with its assigned ID and

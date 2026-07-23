@@ -213,6 +213,43 @@ func TestStore_DeleteSessionMissingIsNotAnError(t *testing.T) {
 	}
 }
 
+func TestStore_AddAuditEventAndList(t *testing.T) {
+	s := openTestStore(t)
+
+	if err := s.AddAuditEvent("scan_ingested", "admin", "acme/infra-repo — scan #1, 3 finding(s)"); err != nil {
+		t.Fatalf("AddAuditEvent returned error: %v", err)
+	}
+	if err := s.AddAuditEvent("login", "user@example.com", "logged in via SSO"); err != nil {
+		t.Fatalf("AddAuditEvent returned error: %v", err)
+	}
+
+	events, err := s.AuditEvents()
+	if err != nil {
+		t.Fatalf("AuditEvents returned error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 audit events, got %d", len(events))
+	}
+	// Most recent first.
+	if events[0].EventType != "login" || events[0].Actor != "user@example.com" {
+		t.Errorf("expected the most recent event (login) first, got %+v", events[0])
+	}
+	if events[1].EventType != "scan_ingested" || events[1].Actor != "admin" {
+		t.Errorf("expected the older event (scan_ingested) second, got %+v", events[1])
+	}
+}
+
+func TestStore_AuditEventsEmptyReturnsNoRows(t *testing.T) {
+	s := openTestStore(t)
+	events, err := s.AuditEvents()
+	if err != nil {
+		t.Fatalf("AuditEvents returned error: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("expected 0 audit events, got %d", len(events))
+	}
+}
+
 func TestScanRun_SeverityCountsIncludesZeroSeverities(t *testing.T) {
 	run := ScanRun{Findings: []Finding{{Severity: "CRITICAL"}, {Severity: "CRITICAL"}, {Severity: "LOW"}}}
 

@@ -33,3 +33,11 @@ export type SessionInfo = {
   email?: string;
   name?: string;
 };
+
+export type AuditEvent = {
+  id: number;
+  eventType: string;
+  actor: string;
+  detail: string;
+  createdAt: string;
+};

@@ -31,8 +31,8 @@ export default function RootLayout({
         <Header />
         <main className="shell">{children}</main>
         <footer className="footer">
-          Self-hosted PolicyForge enterprise portal. No audit trail or
-          compliance mapping yet — see <code>enterprise/DESIGN.md</code>.
+          Self-hosted PolicyForge enterprise portal. No compliance
+          framework mapping yet — see <code>enterprise/DESIGN.md</code>.
         </footer>
       </body>
     </html>

@@ -108,6 +108,12 @@ summaries (`id`, `org`, `project`, `createdAt`, `severityCounts`, `total`).
 if the caller is authenticated (email/name only present under SSO); used
 by `web/`'s proxy and header to know who's logged in.
 
+`GET /api/audit` — an array of audit log entries (`id`, `eventType`,
+`actor`, `detail`, `createdAt`), most recent first: one per scan ingested
+(`scan_ingested`, actor = the Basic Auth username, or `anonymous` if auth
+is disabled) and per SSO login/logout (actor = the session's email).
+Rendered by `web/`'s "Audit log" page.
+
 ## Configuration
 
 | Flag | Env var | Default | Purpose |
