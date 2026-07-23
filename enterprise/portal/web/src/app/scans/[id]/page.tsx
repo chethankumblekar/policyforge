@@ -77,6 +77,23 @@ export default function ScanDetailPage() {
         </div>
       </div>
 
+      {(scan.hasSBOM || scan.hasProvenance) && (
+        <div className="attestation">
+          {scan.hasSBOM && (
+            <details>
+              <summary>SBOM</summary>
+              <pre>{JSON.stringify(scan.sbom, null, 2)}</pre>
+            </details>
+          )}
+          {scan.hasProvenance && (
+            <details>
+              <summary>SLSA provenance predicate</summary>
+              <pre>{JSON.stringify(scan.provenance, null, 2)}</pre>
+            </details>
+          )}
+        </div>
+      )}
+
       {scan.findings.length === 0 ? (
         <p className="empty">✔ No policy violations in this scan.</p>
       ) : (

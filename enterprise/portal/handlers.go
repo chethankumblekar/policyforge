@@ -15,11 +15,17 @@ import (
 
 // ingestRequest is the JSON body /api/scans accepts: the same Finding
 // shape internal/engine.ToJSON already produces, plus org/project so the
-// portal can group scans by where they came from.
+// portal can group scans by where they came from. SBOM/Provenance are
+// optional — present only when the CLI invocation that posted this scan
+// also passed --sbom/--provenance (see cmd/policyforge's uploadFindings)
+// — and are stored as opaque JSON (json.RawMessage), not decoded into
+// portal-side types; see ScanRun's doc comment for why.
 type ingestRequest struct {
-	Org      string    `json:"org"`
-	Project  string    `json:"project"`
-	Findings []Finding `json:"findings"`
+	Org        string          `json:"org"`
+	Project    string          `json:"project"`
+	Findings   []Finding       `json:"findings"`
+	SBOM       json.RawMessage `json:"sbom,omitempty"`
+	Provenance json.RawMessage `json:"provenance,omitempty"`
 }
 
 type ingestResponse struct {
@@ -50,6 +56,13 @@ func handleIngest(store *Store) http.HandlerFunc {
 			return
 		}
 
+		if len(req.SBOM) > 0 || len(req.Provenance) > 0 {
+			if err := store.SetArtifacts(run.ID, string(req.SBOM), string(req.Provenance)); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
 		// The Basic Auth username is the closest thing to an actor
 		// identity CLI/CI ingestion has (see auth.go — Basic Auth is the
 		// only auth /api/scans ever uses, regardless of SSO); r.BasicAuth
@@ -76,7 +89,9 @@ func handleIngest(store *Store) http.HandlerFunc {
 }
 
 // scanSummary is the list-view JSON shape: everything the scan list page
-// needs, without repeating every finding's full detail.
+// needs, without repeating every finding's full detail. HasSBOM/
+// HasProvenance are just presence flags — the full documents are only
+// in scanDetail, so the list view stays small.
 type scanSummary struct {
 	ID             int            `json:"id"`
 	Org            string         `json:"org"`
@@ -84,6 +99,8 @@ type scanSummary struct {
 	CreatedAt      string         `json:"createdAt"`
 	SeverityCounts map[string]int `json:"severityCounts"`
 	Total          int            `json:"total"`
+	HasSBOM        bool           `json:"hasSBOM"`
+	HasProvenance  bool           `json:"hasProvenance"`
 }
 
 func handleScansList(store *Store) http.HandlerFunc {
@@ -103,6 +120,8 @@ func handleScansList(store *Store) http.HandlerFunc {
 				CreatedAt:      s.CreatedAt.Format(rfc3339Milli),
 				SeverityCounts: s.SeverityCounts(),
 				Total:          len(s.Findings),
+				HasSBOM:        s.SBOM != "",
+				HasProvenance:  s.Provenance != "",
 			})
 		}
 
@@ -112,10 +131,13 @@ func handleScansList(store *Store) http.HandlerFunc {
 }
 
 // scanDetail is the detail-view JSON shape: the summary fields plus every
-// finding.
+// finding, and the full SBOM/provenance documents (opaque JSON — see
+// ScanRun) when the scan was ingested with them.
 type scanDetail struct {
 	scanSummary
-	Findings []Finding `json:"findings"`
+	Findings   []Finding       `json:"findings"`
+	SBOM       json.RawMessage `json:"sbom,omitempty"`
+	Provenance json.RawMessage `json:"provenance,omitempty"`
 }
 
 func handleScanDetailAPI(store *Store) http.HandlerFunc {
@@ -136,6 +158,14 @@ func handleScanDetailAPI(store *Store) http.HandlerFunc {
 			return
 		}
 
+		var sbomRaw, provenanceRaw json.RawMessage
+		if run.SBOM != "" {
+			sbomRaw = json.RawMessage(run.SBOM)
+		}
+		if run.Provenance != "" {
+			provenanceRaw = json.RawMessage(run.Provenance)
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(scanDetail{
 			scanSummary: scanSummary{
@@ -145,8 +175,12 @@ func handleScanDetailAPI(store *Store) http.HandlerFunc {
 				CreatedAt:      run.CreatedAt.Format(rfc3339Milli),
 				SeverityCounts: run.SeverityCounts(),
 				Total:          len(run.Findings),
+				HasSBOM:        run.SBOM != "",
+				HasProvenance:  run.Provenance != "",
 			},
-			Findings: run.Findings,
+			Findings:   run.Findings,
+			SBOM:       sbomRaw,
+			Provenance: provenanceRaw,
 		})
 	}
 }

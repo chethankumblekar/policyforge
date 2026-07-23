@@ -137,31 +137,38 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 		engine.PrintTable(stdout, findings)
 	}
 
+	// Built before --upload (below), which attaches whichever of these
+	// were actually requested to the same scan record.
+	var sbomDoc *sbom.Document
 	if *genSBOM {
 		doc := sbom.Generate(normalized)
+		sbomDoc = &doc
 		fmt.Fprintln(stderr, "\nSBOM generated:")
 		fmt.Fprintln(stdout, sbom.ToJSON(doc))
 	}
 
+	var provenancePred *provenance.Predicate
+	if *provenanceOut != "" {
+		pred, err := writeProvenance(*provenanceOut, map[string]string{
+			"path":      *path,
+			"format":    *format,
+			"policyDir": *policyDir,
+		}, materialFiles(resources), startedOn, time.Now())
+		if err != nil {
+			fmt.Fprintf(stderr, "provenance error: %v\n", err)
+			return 1
+		}
+		provenancePred = &pred
+		fmt.Fprintf(stderr, "\nProvenance predicate written to %s (attach it with 'policyforge attest').\n", *provenanceOut)
+	}
+
 	if *uploadURL != "" {
-		scanURL, _, err := uploadFindings(*uploadURL, *org, *project, findings)
+		scanURL, _, err := uploadFindings(*uploadURL, *org, *project, findings, sbomDoc, provenancePred)
 		if err != nil {
 			fmt.Fprintf(stderr, "upload error: %v\n", err)
 			return 1
 		}
 		fmt.Fprintf(stderr, "\nUploaded to portal: %s\n", scanURL)
-	}
-
-	if *provenanceOut != "" {
-		if err := writeProvenance(*provenanceOut, map[string]string{
-			"path":      *path,
-			"format":    *format,
-			"policyDir": *policyDir,
-		}, materialFiles(resources), startedOn, time.Now()); err != nil {
-			fmt.Fprintf(stderr, "provenance error: %v\n", err)
-			return 1
-		}
-		fmt.Fprintf(stderr, "\nProvenance predicate written to %s (attach it with 'policyforge attest').\n", *provenanceOut)
 	}
 
 	if engine.HasFailures(findings) {
@@ -191,13 +198,19 @@ func materialFiles(resources []parser.Resource) []string {
 // print) and ID. baseURL may embed HTTP Basic Auth credentials as
 // userinfo (e.g. "http://admin:secret@localhost:8090"), matching how the
 // portal gates access by default in real deployments — see
-// enterprise/portal/auth.go.
-func uploadFindings(baseURL, org, project string, findings []engine.Finding) (scanURL string, id int, err error) {
+// enterprise/portal/auth.go. sbomDoc/provenancePred are nil unless the
+// matching --sbom/--provenance flag was also passed to this scan; the
+// portal stores whichever ones are present so the dashboard can show
+// attestation status per scan (see enterprise/DESIGN.md's "SBOM/provenance
+// ingestion" open question).
+func uploadFindings(baseURL, org, project string, findings []engine.Finding, sbomDoc *sbom.Document, provenancePred *provenance.Predicate) (scanURL string, id int, err error) {
 	body, err := json.Marshal(struct {
-		Org      string           `json:"org"`
-		Project  string           `json:"project"`
-		Findings []engine.Finding `json:"findings"`
-	}{Org: org, Project: project, Findings: findings})
+		Org        string                `json:"org"`
+		Project    string                `json:"project"`
+		Findings   []engine.Finding      `json:"findings"`
+		SBOM       *sbom.Document        `json:"sbom,omitempty"`
+		Provenance *provenance.Predicate `json:"provenance,omitempty"`
+	}{Org: org, Project: project, Findings: findings, SBOM: sbomDoc, Provenance: provenancePred})
 	if err != nil {
 		return "", 0, fmt.Errorf("encoding upload payload: %w", err)
 	}
@@ -241,21 +254,22 @@ func uploadFindings(baseURL, org, project string, findings []engine.Finding) (sc
 	return fmt.Sprintf("%s/scans/%d", sanitizedBase, decoded.ID), decoded.ID, nil
 }
 
-// writeProvenance builds a SLSA provenance predicate and writes it as
-// JSON to path.
-func writeProvenance(path string, params map[string]string, materials []string, startedOn, finishedOn time.Time) error {
+// writeProvenance builds a SLSA provenance predicate, writes it as JSON
+// to path, and returns the predicate itself so the caller can also
+// attach it to a --upload (see uploadFindings).
+func writeProvenance(path string, params map[string]string, materials []string, startedOn, finishedOn time.Time) (provenance.Predicate, error) {
 	pred, err := provenance.Generate(params, materials, startedOn, finishedOn)
 	if err != nil {
-		return fmt.Errorf("building provenance predicate: %w", err)
+		return provenance.Predicate{}, fmt.Errorf("building provenance predicate: %w", err)
 	}
 	out, err := provenance.ToJSON(pred)
 	if err != nil {
-		return fmt.Errorf("rendering provenance predicate: %w", err)
+		return provenance.Predicate{}, fmt.Errorf("rendering provenance predicate: %w", err)
 	}
 	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
-		return fmt.Errorf("writing provenance predicate: %w", err)
+		return provenance.Predicate{}, fmt.Errorf("writing provenance predicate: %w", err)
 	}
-	return nil
+	return pred, nil
 }
 
 func runSign(args []string, stdout, stderr io.Writer) int {

@@ -4,11 +4,11 @@
 [`portal/`](portal) is a real, self-hosted v1** — Docker/Compose packaged,
 SQLite-persisted, HTTP Basic Auth for API/machine access, real per-user
 dashboard login via OIDC SSO (Entra ID or any other compliant IdP), a
-proper Next.js dashboard UI (`portal/web`), and an audit trail of scan
-ingestion + logins/logouts — not a throwaway prototype anymore, though
-still short of the full Scope below (no compliance framework mapping, no
-SBOM/provenance ingestion). See `portal/README.md` for how to run it and
-configure SSO.
+proper Next.js dashboard UI (`portal/web`), an audit trail of scan
+ingestion + logins/logouts, and SBOM/provenance ingestion — not a
+throwaway prototype anymore, though still short of the full Scope below
+(no compliance framework mapping). See `portal/README.md` for how to run
+it and configure SSO.
 
 **Decided:**
 - **Hosting model: self-hosted.** The customer runs `portal/` themselves
@@ -36,10 +36,15 @@ visibility/governance on top, not a gate on core scanning functionality.
 - **Hosted dashboard** — aggregate scan results (findings, SBOM,
   provenance/attestation status) across every repo/pipeline that runs
   `policyforge scan`, with trend views and drill-down to individual
-  findings. **Built** (scan list + drill-down; trend views and
-  SBOM/provenance status are not) — `portal/web`, a Next.js frontend
-  calling the Go API for everything, with a distinctive design system
-  (see `portal/web/README.md`) rather than a generic dashboard template.
+  findings. **Built** (scan list + drill-down + SBOM/provenance status;
+  trend views are not) — `portal/web`, a Next.js frontend calling the Go
+  API for everything, with a distinctive design system (see
+  `portal/web/README.md`) rather than a generic dashboard template. A
+  scan ingested with `--sbom`/`--provenance` shows `SBOM`/`Provenance`
+  tags in the scan list and an expandable raw-JSON viewer on the scan
+  detail page — the portal stores and displays both as opaque JSON (see
+  `ScanRun`'s doc comment in `portal/store.go`), never parsing their
+  fields, since it's a viewer over what the CLI already produced.
 - **Entra ID SSO** — organization login for the dashboard itself (not
   related to the CLI's use of `DefaultAzureCredential` for drift
   detection, which is a separate, already-shipped OSS feature). **Built**
@@ -80,15 +85,17 @@ duplicates into the hosted side. The integration point:
 policyforge scan --path . --upload http://admin:secret@localhost:8090 --org acme --project infra-repo
 ```
 
-`--upload` POSTs `{org, project, findings}` to `<url>/api/scans` (see
-`portal/handlers.go`), authenticating with HTTP Basic Auth if the URL
-carries `user:pass@` userinfo (matching `portal`'s own auth gate — see
-`portal/auth.go`). This mirrors how the GitHub Action/Azure DevOps task
-already run the CLI and act on its output; `--upload` is one more consumer
-of the same JSON shape, not a new code path through the scanner.
+`--upload` POSTs `{org, project, findings, sbom?, provenance?}` to
+`<url>/api/scans` (see `portal/handlers.go`) — the last two only present
+if the same `policyforge scan` invocation also passed `--sbom`/
+`--provenance` (see `uploadFindings` in `cmd/policyforge/main.go`) —
+authenticating with HTTP Basic Auth if the URL carries `user:pass@`
+userinfo (matching `portal`'s own auth gate — see `portal/auth.go`). This
+mirrors how the GitHub Action/Azure DevOps task already run the CLI and
+act on its output; `--upload` is one more consumer of the same JSON
+shape, not a new code path through the scanner.
 
-**Still not real:** SBOM/provenance ingestion (only findings are posted
-today), and everything past ingestion — audit trail, compliance mapping.
+**Still not real:** compliance mapping (see "Open questions" below).
 `/api/scans` itself stays Basic-Auth-gated even with SSO configured
 (that's still the CLI/CI-pipeline path, not a human at a browser).
 
@@ -99,9 +106,9 @@ Organization
   └─ Project (maps to a repo/pipeline)
        └─ ScanRun (one `policyforge scan` invocation)
             ├─ Finding[]        (RuleID, Severity, Resource, File, Line — same shape as engine.Finding)
-            ├─ SBOM             (if --sbom was used)
-            ├─ ProvenancePredicate (if --provenance was used)
-            └─ AttestationRef   (if the artifact was cosign-attested; store the bundle location, not re-verify it server-side unless asked)
+            ├─ SBOM             (opaque JSON, if --sbom was used — built)
+            ├─ ProvenancePredicate (opaque JSON, if --provenance was used — built)
+            └─ AttestationRef   (if the artifact was cosign-attested; store the bundle location, not re-verify it server-side unless asked — not built)
 AuditEvent (org-scoped: scan ingested, policy pushed, user login, ...)
 CompliancePack (a named rollup of RuleIDs -> a framework's control IDs, e.g. "SOC2" -> {PF-AZ-001: CC6.1, ...})
 ```
@@ -127,13 +134,12 @@ CompliancePack (a named rollup of RuleIDs -> a framework's control IDs, e.g. "SO
 
 ## Open questions (block the next real increment)
 
-1. **Retention/data residency** — how long are ingested findings (and now sessions and audit events) kept, and does data residency (e.g. EU-only) need to be a per-org setting? Not urgent while this is a single self-hosted SQLite file the customer already controls, but worth deciding before growing past that.
-2. **SBOM/provenance ingestion** — extend `/api/scans` to accept the SBOM and provenance predicate too (not just findings), and the dashboard to show attestation status per scan.
+1. **Retention/data residency** — how long are ingested findings (and now sessions, audit events, and any attached SBOM/provenance documents) kept, and does data residency (e.g. EU-only) need to be a per-org setting? Not urgent while this is a single self-hosted SQLite file the customer already controls, but worth deciding before growing past that.
+2. **Attestation verification** — the dashboard shows *that* an SBOM/provenance predicate was attached, but never verifies a cosign signature/attestation against it (see the "AttestationRef" line in the sketch data model, still unbuilt) — it's a raw-JSON viewer, not a trust decision.
 3. **Multi-tenancy within one deployment** — today `org`/`project` are just free-text tags on a scan row, not real isolation (any logged-in user or Basic-Auth-holder sees every org's data). Worth a real access-control model (e.g. mapping OIDC group/role claims to org access) once more than one org shares a single self-hosted instance.
 
 ## Next step
 
-SBOM/provenance ingestion is the natural next increment — the CLI
-already produces both (`--sbom`, `--provenance`), so the gap is purely on
-the portal side: accepting them in `/api/scans` and surfacing attestation
-status in the dashboard.
+Compliance framework mapping is the last unbuilt item in Scope — rolling
+up rule-level findings (already tagged with e.g. "CIS Azure Foundations
+3.6") into SOC2/PCI control coverage reports.

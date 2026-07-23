@@ -213,6 +213,74 @@ func TestStore_DeleteSessionMissingIsNotAnError(t *testing.T) {
 	}
 }
 
+func TestStore_SetArtifactsRoundTrips(t *testing.T) {
+	s := openTestStore(t)
+	added, err := s.Add("acme", "infra-repo", nil)
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	if err := s.SetArtifacts(added.ID, `{"schemaVersion":"policyforge-sbom/0.1"}`, `{"buildType":"..."}`); err != nil {
+		t.Fatalf("SetArtifacts returned error: %v", err)
+	}
+
+	got, ok, err := s.Get(added.ID)
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected to find the scan")
+	}
+	if got.SBOM != `{"schemaVersion":"policyforge-sbom/0.1"}` {
+		t.Errorf("expected SBOM to round-trip, got %q", got.SBOM)
+	}
+	if got.Provenance != `{"buildType":"..."}` {
+		t.Errorf("expected Provenance to round-trip, got %q", got.Provenance)
+	}
+}
+
+func TestStore_ScanWithoutArtifactsReturnsEmptyStrings(t *testing.T) {
+	s := openTestStore(t)
+	added, err := s.Add("acme", "infra-repo", nil)
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	got, ok, err := s.Get(added.ID)
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected to find the scan")
+	}
+	if got.SBOM != "" || got.Provenance != "" {
+		t.Errorf("expected empty SBOM/Provenance for a scan ingested without them, got SBOM=%q Provenance=%q", got.SBOM, got.Provenance)
+	}
+}
+
+func TestStore_SetArtifactsOneOnlyLeavesTheOtherEmpty(t *testing.T) {
+	s := openTestStore(t)
+	added, err := s.Add("acme", "infra-repo", nil)
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	if err := s.SetArtifacts(added.ID, `{"schemaVersion":"policyforge-sbom/0.1"}`, ""); err != nil {
+		t.Fatalf("SetArtifacts returned error: %v", err)
+	}
+
+	got, _, err := s.Get(added.ID)
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if got.SBOM == "" {
+		t.Error("expected SBOM to be set")
+	}
+	if got.Provenance != "" {
+		t.Errorf("expected Provenance to stay empty, got %q", got.Provenance)
+	}
+}
+
 func TestStore_AddAuditEventAndList(t *testing.T) {
 	s := openTestStore(t)
 

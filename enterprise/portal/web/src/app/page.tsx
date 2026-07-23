@@ -62,6 +62,14 @@ export default function ScanListPage() {
                   <span className="scan-log__time">
                     {new Date(s.createdAt).toLocaleString()}
                   </span>
+                  {(s.hasSBOM || s.hasProvenance) && (
+                    <span className="attest-tags">
+                      {s.hasSBOM && <span className="attest-tag">SBOM</span>}
+                      {s.hasProvenance && (
+                        <span className="attest-tag">Provenance</span>
+                      )}
+                    </span>
+                  )}
                 </span>
                 <SeverityBar counts={s.severityCounts} />
                 <span className="scan-log__total">

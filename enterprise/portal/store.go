@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -22,13 +23,20 @@ type Finding struct {
 	Description string `json:"Description"`
 }
 
-// ScanRun is one ingested scan.
+// ScanRun is one ingested scan. SBOM/Provenance are the raw JSON bodies
+// POSTed alongside findings (see ingestRequest in handlers.go) — the
+// portal stores and displays them as opaque documents rather than
+// parsing their fields, matching enterprise/DESIGN.md's non-goal of
+// re-implementing anything the CLI itself already produced. Both are
+// empty strings when a scan was ingested without --sbom/--provenance.
 type ScanRun struct {
-	ID        int
-	Org       string
-	Project   string
-	CreatedAt time.Time
-	Findings  []Finding
+	ID         int
+	Org        string
+	Project    string
+	CreatedAt  time.Time
+	Findings   []Finding
+	SBOM       string
+	Provenance string
 }
 
 // SeverityCounts tallies findings per severity, always including all four
@@ -72,6 +80,17 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("creating schema: %w", err)
 	}
 
+	// Added after the initial schema — migrateAddColumn makes adding
+	// them to a database file created by an older portal version safe.
+	if err := migrateAddColumn(db, "scans", "sbom_json", "TEXT"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := migrateAddColumn(db, "scans", "provenance_json", "TEXT"); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS sessions (
 			id         TEXT PRIMARY KEY,
@@ -98,6 +117,18 @@ func NewStore(dbPath string) (*Store, error) {
 	}
 
 	return &Store{db: db}, nil
+}
+
+// migrateAddColumn adds column to table if it isn't already there. SQLite
+// has no "ADD COLUMN IF NOT EXISTS", so this just treats the "duplicate
+// column" error a repeat run produces as success — a lightweight
+// alternative to a full migration framework for a schema this small.
+func migrateAddColumn(db *sql.DB, table, column, ddl string) error {
+	_, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddl))
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("adding column %s.%s: %w", table, column, err)
+	}
+	return nil
 }
 
 // Session is one logged-in dashboard user's SSO session (see sso.go).
@@ -244,9 +275,11 @@ func (s *Store) Add(org, project string, findings []Finding) (ScanRun, error) {
 	return ScanRun{ID: int(id), Org: org, Project: project, CreatedAt: createdAt, Findings: findings}, nil
 }
 
+const scanColumns = `id, org, project, created_at, findings_json, sbom_json, provenance_json`
+
 // All returns every scan run, most recently ingested first.
 func (s *Store) All() ([]ScanRun, error) {
-	rows, err := s.db.Query(`SELECT id, org, project, created_at, findings_json FROM scans ORDER BY created_at DESC`)
+	rows, err := s.db.Query(`SELECT ` + scanColumns + ` FROM scans ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("querying scans: %w", err)
 	}
@@ -265,7 +298,7 @@ func (s *Store) All() ([]ScanRun, error) {
 
 // Get looks up a scan run by ID.
 func (s *Store) Get(id int) (ScanRun, bool, error) {
-	row := s.db.QueryRow(`SELECT id, org, project, created_at, findings_json FROM scans WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT `+scanColumns+` FROM scans WHERE id = ?`, id)
 
 	run, err := scanRow(row)
 	if err == sql.ErrNoRows {
@@ -277,6 +310,28 @@ func (s *Store) Get(id int) (ScanRun, bool, error) {
 	return run, true, nil
 }
 
+// SetArtifacts attaches an SBOM and/or SLSA provenance predicate (as raw
+// JSON, exactly as posted to /api/scans) to an already-ingested scan.
+// Passing "" for either leaves that scan without one, matching a CLI
+// invocation that ran without --sbom/--provenance.
+func (s *Store) SetArtifacts(scanID int, sbomJSON, provenanceJSON string) error {
+	_, err := s.db.Exec(
+		`UPDATE scans SET sbom_json = ?, provenance_json = ? WHERE id = ?`,
+		nullIfEmpty(sbomJSON), nullIfEmpty(provenanceJSON), scanID,
+	)
+	if err != nil {
+		return fmt.Errorf("updating scan artifacts: %w", err)
+	}
+	return nil
+}
+
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 // rowScanner is satisfied by both *sql.Row and *sql.Rows, so scanRow
 // works for Get's single-row lookup and All's multi-row iteration alike.
 type rowScanner interface {
@@ -286,8 +341,9 @@ type rowScanner interface {
 func scanRow(rs rowScanner) (ScanRun, error) {
 	var run ScanRun
 	var createdAt, findingsJSON string
+	var sbomJSON, provenanceJSON sql.NullString
 
-	if err := rs.Scan(&run.ID, &run.Org, &run.Project, &createdAt, &findingsJSON); err != nil {
+	if err := rs.Scan(&run.ID, &run.Org, &run.Project, &createdAt, &findingsJSON, &sbomJSON, &provenanceJSON); err != nil {
 		return ScanRun{}, err
 	}
 
@@ -300,6 +356,8 @@ func scanRow(rs rowScanner) (ScanRun, error) {
 	if err := json.Unmarshal([]byte(findingsJSON), &run.Findings); err != nil {
 		return ScanRun{}, fmt.Errorf("decoding findings: %w", err)
 	}
+	run.SBOM = sbomJSON.String
+	run.Provenance = provenanceJSON.String
 
 	return run, nil
 }

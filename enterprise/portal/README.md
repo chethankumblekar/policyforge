@@ -92,17 +92,26 @@ the same SQLite file as scans, so they survive a portal restart.
 {
   "org": "acme",
   "project": "infra-repo",
-  "findings": [ /* the same array internal/engine.ToJSON produces */ ]
+  "findings": [ /* the same array internal/engine.ToJSON produces */ ],
+  "sbom": { /* optional — internal/sbom.Document, present iff --sbom was passed */ },
+  "provenance": { /* optional — internal/provenance.Predicate, present iff --provenance was passed */ }
 }
 ```
+
+`sbom`/`provenance` are stored and returned verbatim (opaque JSON — the
+portal never parses their fields); `GET /api/scans/{id}` includes them
+when present, and the dashboard shows them as expandable raw-JSON
+viewers on the scan detail page.
 
 Response: `{"id": 1, "url": "/scans/1"}`.
 
 `GET /api/scans` — list (Basic Auth or SSO session): an array of scan
-summaries (`id`, `org`, `project`, `createdAt`, `severityCounts`, `total`).
+summaries (`id`, `org`, `project`, `createdAt`, `severityCounts`, `total`,
+`hasSBOM`, `hasProvenance`).
 
 `GET /api/scans/{id}` — detail (same auth): a summary plus the full
-`findings` array.
+`findings` array, and `sbom`/`provenance` (omitted, not `null`, when the
+scan doesn't have them).
 
 `GET /api/session` — `{"authenticated": true, "email": "...", "name": "..."}`
 if the caller is authenticated (email/name only present under SSO); used

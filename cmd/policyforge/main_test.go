@@ -535,6 +535,64 @@ func TestRunScan_UploadFlagPostsFindings(t *testing.T) {
 	}
 }
 
+func TestRunScan_UploadIncludesSBOMAndProvenanceWhenRequested(t *testing.T) {
+	var gotBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("failed to decode upload body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{"id": 1, "url": "/scans/1"})
+	}))
+	defer srv.Close()
+
+	provenancePath := filepath.Join(t.TempDir(), "provenance.json")
+	var stdout, stderr bytes.Buffer
+	code := runScan([]string{
+		"--path", "../../examples/insecure.tf",
+		"--upload", srv.URL, "--org", "acme", "--project", "infra-repo",
+		"--sbom",
+		"--provenance", provenancePath,
+	}, &stdout, &stderr)
+
+	if code != 1 { // insecure.tf has HIGH/CRITICAL findings
+		t.Fatalf("expected exit code 1, got %d; stderr=%s", code, stderr.String())
+	}
+	if gotBody["sbom"] == nil {
+		t.Error("expected the upload body to include an sbom object when --sbom was passed")
+	}
+	if gotBody["provenance"] == nil {
+		t.Error("expected the upload body to include a provenance object when --provenance was passed")
+	}
+}
+
+func TestRunScan_UploadOmitsSBOMAndProvenanceWhenNotRequested(t *testing.T) {
+	var gotBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("failed to decode upload body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{"id": 1, "url": "/scans/1"})
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := runScan([]string{"--path", "../../examples/insecure.tf", "--upload", srv.URL, "--org", "acme", "--project", "infra-repo"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d; stderr=%s", code, stderr.String())
+	}
+	if _, ok := gotBody["sbom"]; ok {
+		t.Errorf("expected no \"sbom\" key in the upload body when --sbom wasn't passed, got %+v", gotBody)
+	}
+	if _, ok := gotBody["provenance"]; ok {
+		t.Errorf("expected no \"provenance\" key in the upload body when --provenance wasn't passed, got %+v", gotBody)
+	}
+}
+
 func TestRunScan_UploadWithBasicAuthCredentials(t *testing.T) {
 	var gotUser, gotPass string
 	var gotOK bool

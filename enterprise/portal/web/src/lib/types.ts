@@ -22,10 +22,17 @@ export type ScanSummary = {
   createdAt: string;
   severityCounts: SeverityCounts;
   total: number;
+  hasSBOM: boolean;
+  hasProvenance: boolean;
 };
 
+// sbom/provenance are the CLI's own JSON output (internal/sbom.Document,
+// internal/provenance.Predicate) verbatim — the portal never parses their
+// fields, so they're typed as unknown here too and just rendered as-is.
 export type ScanDetail = ScanSummary & {
   findings: Finding[];
+  sbom?: unknown;
+  provenance?: unknown;
 };
 
 export type SessionInfo = {
