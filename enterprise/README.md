@@ -1,6 +1,6 @@
 # Enterprise
 
-This directory holds the enterprise tier: a self-hosted dashboard with real per-user login today, plus org-wide policy management, an audit trail, and compliance framework mapping (SOC2/PCI) planned on top of it.
+This directory holds the enterprise tier: a self-hosted dashboard with real per-user login, an audit trail, and SOC2/PCI compliance control coverage today, plus org-wide policy management planned on top of it.
 
 See [`DESIGN.md`](DESIGN.md) for full scope. Calls made and built on: **self-hosted** (you run it; no PolicyForge-operated SaaS), **network-gated API access** (a shared Basic Auth credential for `/api/scans`, not license keys), and **OIDC/Entra ID SSO** for real per-user dashboard login.
 

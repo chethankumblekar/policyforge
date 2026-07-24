@@ -2,8 +2,9 @@
 // Next.js app) — this file is a pure JSON API: ingestion (POST
 // /api/scans, Basic-Auth-gated, the CLI/CI-pipeline path) and read
 // endpoints (GET /api/scans, GET /api/scans/{id}, GET /api/session,
-// gated the same way the dashboard is — SSO session or Basic Auth, see
-// main.go) that the Next.js frontend calls for data.
+// GET /api/audit, GET /api/compliance, gated the same way the dashboard
+// is — SSO session or Basic Auth, see main.go) that the Next.js frontend
+// calls for data.
 package main
 
 import (
@@ -242,6 +243,22 @@ func handleAuditList(store *Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(out)
+	}
+}
+
+// handleComplianceReport rolls up every project's latest ingested scan
+// into SOC2/PCI control coverage — see compliance.go's BuildComplianceReport
+// and enterprise/DESIGN.md's Scope entry for this feature.
+func handleComplianceReport(store *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		scans, err := store.All()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(BuildComplianceReport(scans))
 	}
 }
 

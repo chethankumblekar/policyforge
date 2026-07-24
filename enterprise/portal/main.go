@@ -63,6 +63,7 @@ func main() {
 	mux.Handle("GET /api/scans/{id}", dashboardAuth(http.HandlerFunc(handleScanDetailAPI(store))))
 	mux.Handle("GET /api/session", dashboardAuth(http.HandlerFunc(handleSession())))
 	mux.Handle("GET /api/audit", dashboardAuth(http.HandlerFunc(handleAuditList(store))))
+	mux.Handle("GET /api/compliance", dashboardAuth(http.HandlerFunc(handleComplianceReport(store))))
 
 	if sso != nil {
 		mux.HandleFunc("/login", sso.handleLogin())

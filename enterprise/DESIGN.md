@@ -5,10 +5,10 @@
 SQLite-persisted, HTTP Basic Auth for API/machine access, real per-user
 dashboard login via OIDC SSO (Entra ID or any other compliant IdP), a
 proper Next.js dashboard UI (`portal/web`), an audit trail of scan
-ingestion + logins/logouts, and SBOM/provenance ingestion — not a
-throwaway prototype anymore, though still short of the full Scope below
-(no compliance framework mapping). See `portal/README.md` for how to run
-it and configure SSO.
+ingestion + logins/logouts, SBOM/provenance ingestion, and SOC2/PCI
+compliance control coverage rollups — not a throwaway prototype anymore,
+though still short of the full Scope below (no org-wide policy
+management). See `portal/README.md` for how to run it and configure SSO.
 
 **Decided:**
 - **Hosting model: self-hosted.** The customer runs `portal/` themselves
@@ -73,7 +73,16 @@ visibility/governance on top, not a gate on core scanning functionality.
   still unbuilt).
 - **Compliance framework mapping** — roll up rule-level findings (already
   tagged with e.g. "CIS Azure Foundations 3.6") into SOC2/PCI control
-  coverage reports.
+  coverage reports. **Built** — `portal/compliance.go` defines a static
+  Go mapping (RuleID -> control ID) for SOC2 and PCI DSS covering all 11
+  current RuleIDs (not every rule maps to every framework — that's shown,
+  not hidden), and `GET /api/compliance` (`portal/web/src/app/compliance`)
+  rolls up each project's *latest* ingested scan into per-control
+  pass/fail status. This mapping lives entirely in the enterprise portal,
+  not in Rego/the OSS engine, since it's an enterprise-tier-only concern
+  (see "How the OSS CLI connects" below) — deliberately labeled in the UI
+  as a common-practice reference mapping, not a certified auditor
+  crosswalk.
 
 ## How the OSS CLI connects
 
@@ -95,9 +104,11 @@ mirrors how the GitHub Action/Azure DevOps task already run the CLI and
 act on its output; `--upload` is one more consumer of the same JSON
 shape, not a new code path through the scanner.
 
-**Still not real:** compliance mapping (see "Open questions" below).
 `/api/scans` itself stays Basic-Auth-gated even with SSO configured
 (that's still the CLI/CI-pipeline path, not a human at a browser).
+Compliance control coverage (`GET /api/compliance`) needs no separate
+CLI/ingestion path — it's computed portal-side from `Finding.RuleID`s
+already present in every ingested scan.
 
 ## Sketch data model
 
@@ -110,7 +121,7 @@ Organization
             ├─ ProvenancePredicate (opaque JSON, if --provenance was used — built)
             └─ AttestationRef   (if the artifact was cosign-attested; store the bundle location, not re-verify it server-side unless asked — not built)
 AuditEvent (org-scoped: scan ingested, policy pushed, user login, ...)
-CompliancePack (a named rollup of RuleIDs -> a framework's control IDs, e.g. "SOC2" -> {PF-AZ-001: CC6.1, ...})
+CompliancePack (a named rollup of RuleIDs -> a framework's control IDs, e.g. "SOC2" -> {PF-AZ-001: CC6.1, ...} — built as a static Go table, portal/compliance.go, not a stored/editable entity yet)
 ```
 
 ## Non-goals (stays out of scope for this module)
@@ -140,6 +151,10 @@ CompliancePack (a named rollup of RuleIDs -> a framework's control IDs, e.g. "SO
 
 ## Next step
 
-Compliance framework mapping is the last unbuilt item in Scope — rolling
-up rule-level findings (already tagged with e.g. "CIS Azure Foundations
-3.6") into SOC2/PCI control coverage reports.
+Org-wide policy management is the last unbuilt item in Scope — pushing a
+shared custom Rego policy set (the OSS `--policy-dir` mechanism) to every
+team's CLI invocations centrally, instead of each repo vendoring its own.
+The three Open questions above — retention/data residency, attestation
+verification, and real multi-tenancy — don't block using the portal
+as-is for a single org, but would need deciding before it grows past one
+self-hosted SQLite file shared by a single team.

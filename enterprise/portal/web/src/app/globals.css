@@ -533,3 +533,51 @@ h1 {
   color: var(--ink);
   line-height: 1.5;
 }
+
+/* ---------- Compliance ---------- */
+
+.compliance-framework + .compliance-framework {
+  margin-top: 32px;
+}
+
+.compliance-framework__title {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.compliance-framework__unmapped {
+  margin-top: 10px;
+}
+
+.compliance-status {
+  font-size: 12.5px;
+}
+
+.compliance-status--pass {
+  color: var(--low);
+}
+
+.compliance-status--fail {
+  color: var(--critical);
+}
+
+.compliance-details {
+  margin-top: 10px;
+}
+
+.compliance-details summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.compliance-details summary:hover {
+  color: var(--ink);
+}
+
+.compliance-details .findings {
+  margin-top: 10px;
+}

@@ -48,3 +48,28 @@ export type AuditEvent = {
   detail: string;
   createdAt: string;
 };
+
+// Mirrors enterprise/portal/compliance.go's ControlMapping/ControlStatus/
+// ComplianceReport. Control mappings are common-practice reference
+// mappings for illustrating rule coverage, not a certified crosswalk.
+export type ControlMapping = {
+  id: string;
+  title: string;
+  ruleIDs: string[];
+};
+
+export type ProjectFailure = {
+  org: string;
+  project: string;
+  scanID: number;
+  findings: Finding[];
+};
+
+export type ControlStatus = ControlMapping & {
+  failingProjects: ProjectFailure[];
+};
+
+export type ComplianceReport = {
+  frameworks: Record<string, ControlStatus[]>;
+  unmappedRuleIDs: Record<string, string[]>;
+};

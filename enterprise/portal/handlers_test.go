@@ -39,6 +39,7 @@ func newAPIMux(store *Store, authUser, authPass string) http.Handler {
 	mux.Handle("GET /api/scans/{id}", basicAuth(authUser, authPass, http.HandlerFunc(handleScanDetailAPI(store))))
 	mux.Handle("GET /api/session", basicAuth(authUser, authPass, http.HandlerFunc(handleSession())))
 	mux.Handle("GET /api/audit", basicAuth(authUser, authPass, http.HandlerFunc(handleAuditList(store))))
+	mux.Handle("GET /api/compliance", basicAuth(authUser, authPass, http.HandlerFunc(handleComplianceReport(store))))
 	return mux
 }
 

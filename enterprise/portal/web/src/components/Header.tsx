@@ -31,6 +31,7 @@ export function Header() {
       <nav className="topnav">
         <Link href="/">Scan runs</Link>
         <Link href="/audit">Audit log</Link>
+        <Link href="/compliance">Compliance</Link>
         {displayName && (
           <>
             <span className="topnav-user">{displayName}</span>

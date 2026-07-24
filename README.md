@@ -74,7 +74,7 @@ cd enterprise/portal && PORTAL_AUTH_USER=admin PORTAL_AUTH_PASS=secret docker co
 policyforge scan --path ./examples --upload http://admin:secret@localhost:8090 --org acme --project infra-repo   # in another
 ```
 
-Open `http://localhost:3000` (browser will prompt for the same credentials, or your IdP's login if you've set `OIDC_*` — see `enterprise/portal/README.md`) to see the scan list and drill into findings, including SBOM/provenance attestation status (`--sbom`/`--provenance`, if passed) and an audit log of every ingestion and login. This is a real, if still early, implementation of the self-hosted enterprise tier scoped in [`enterprise/DESIGN.md`](enterprise/DESIGN.md) — compliance framework mapping is the one item still ahead of it.
+Open `http://localhost:3000` (browser will prompt for the same credentials, or your IdP's login if you've set `OIDC_*` — see `enterprise/portal/README.md`) to see the scan list and drill into findings, including SBOM/provenance attestation status (`--sbom`/`--provenance`, if passed), an audit log of every ingestion and login, and a `/compliance` page rolling up findings into SOC2/PCI control coverage. This is a real, if still early, implementation of the self-hosted enterprise tier scoped in [`enterprise/DESIGN.md`](enterprise/DESIGN.md) — org-wide policy management is the one item still ahead of it.
 
 ## How it works
 
